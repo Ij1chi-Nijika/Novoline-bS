@@ -2,7 +2,7 @@
 <img src="https://media.discordapp.net/attachments/1229927679604817972/1453343405986807882/tealgreenish.png?ex=694d1b05&is=694bc985&hm=068801d17c43f00785ebc0ec80476b4c3a5fe65fe2b0cff222daa05a494d75c8&=&format=webp&quality=lossless&width=192&height=192" alt="raven-logo" width="15%"/>
 </p>
 
-<h1 align="center">Raven Bs</h1>
+<h1 align="center">Novoline bS</h1>
 <p align="center">A privacy-first Minecraft 1.8.9 Forge utility mod designed for Hypixel.</p>
 
 <div align="center">
