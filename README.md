@@ -1,6 +1,4 @@
-<p align="center">
-<img src="https://media.discordapp.net/attachments/1229927679604817972/1453343405986807882/tealgreenish.png?ex=694d1b05&is=694bc985&hm=068801d17c43f00785ebc0ec80476b4c3a5fe65fe2b0cff222daa05a494d75c8&=&format=webp&quality=lossless&width=192&height=192" alt="raven-logo" width="15%"/>
-</p>
+<img width="1919" height="1079" alt="MEITU_20260731_192057126" src="https://github.com/user-attachments/assets/95215e8d-79d6-4060-88dd-1bf57626c32b" />
 
 <h1 align="center">Novoline bS</h1>
 <p align="center">A privacy-first Minecraft 1.8.9 Forge utility mod designed for Hypixel.</p>
@@ -17,7 +15,7 @@ Raven Bs was created with a strong foundation built on user privacy and the comm
 
 ## Installation
 
-- Download the latest jar from the [releases](https://codeberg.org/strangerrrrs/raven-bS/releases) page.
+- Download the latest jar from the [Releases](https://github.com/Ijichi-NIjika/Novoline-bS) page.
 - Ensure Forge for Minecraft 1.8.9 is installed.
 - Drag the jar file into your mods folder.
 - Launch the game!
