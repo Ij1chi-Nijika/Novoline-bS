@@ -1,5 +1,6 @@
 package keystrokesmod.module.impl.render;
 
+import com.google.gson.JsonObject;
 import keystrokesmod.module.Module;
 import keystrokesmod.module.ModuleManager;
 import keystrokesmod.module.setting.impl.ButtonSetting;
@@ -50,6 +51,8 @@ public class HUD extends Module {
     private static ButtonSetting alignRight;
     public static ButtonSetting lowercase;
     public static ButtonSetting showInfo;
+    public static ButtonSetting replaceScoreboardServerIp;
+    public static TextSetting scoreboardServerIp;
     // Novoline HUD settings. The legacy fields above remain public because other Raven
     // modules use them to derive an accent colour and a configurable list position.
     public static TextSetting novolineClientName;
@@ -111,6 +114,18 @@ public class HUD extends Module {
         this.registerSetting(lowercase = new ButtonSetting("Lowercase", false));
         this.registerSetting(showInfo = new ButtonSetting("Show module info", true));
 
+        this.registerSetting(new DescriptionSetting("Scoreboard"));
+        this.registerSetting(replaceScoreboardServerIp = new ButtonSetting("Replace server IP", true));
+        this.registerSetting(scoreboardServerIp = new TextSetting("Server IP", "www.novoline.wtf", "www.novoline.wtf", 64) {
+            @Override
+            public void loadProfile(JsonObject data) {
+                String key = getProfileKey();
+                if (data != null && data.has(key) && data.get(key).isJsonPrimitive()) {
+                    setText(data.getAsJsonPrimitive(key).getAsString());
+                }
+            }
+        });
+
         this.registerSetting(new DescriptionSetting("Novoline HUD"));
         this.registerSetting(novolineClientName = new TextSetting("Client name", "Novoline", "Novoline", 24));
         this.registerSetting(novolineFont = new SliderSetting("HUD font", 0, new String[]{ "Client", "Vanilla" }));
@@ -161,6 +176,9 @@ public class HUD extends Module {
         }
         if (waveLength != null) {
             waveLength.setVisible(showWaveSettings, this);
+        }
+        if (scoreboardServerIp != null && replaceScoreboardServerIp != null) {
+            scoreboardServerIp.setVisible(replaceScoreboardServerIp.isToggled(), this);
         }
     }
 
@@ -641,6 +659,17 @@ public class HUD extends Module {
 
     public static RavenFontRenderer getHudFontRenderer() {
         return FontManager.getHudRenderer(getSelectedFontName(), getSelectedFontScale());
+    }
+
+    public static boolean shouldReplaceScoreboardServerIp() {
+        return ModuleManager.hud != null && ModuleManager.hud.isEnabled()
+                && replaceScoreboardServerIp != null && replaceScoreboardServerIp.isToggled();
+    }
+
+    public static int drawScoreboardServerIp(float x, float y) {
+        String text = scoreboardServerIp == null ? "www.novoline.wtf" : scoreboardServerIp.getText();
+        RavenFontRenderer scoreboardFont = FontManager.getRendererForEclipseSfBold(9.0f);
+        return scoreboardFont.drawString(text, x, y, getHudColor(0.0), shouldDrawTextShadow());
     }
 
     public static String getHudText(Module module) {

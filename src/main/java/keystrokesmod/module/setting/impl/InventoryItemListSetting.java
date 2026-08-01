@@ -11,6 +11,7 @@ import java.util.Map;
 
 public class InventoryItemListSetting extends ItemListSetting {
     private static final int DEFAULT_ASSIGNED_SLOT = 1;
+    private static final int HOTBAR_SIZE = 9;
     private final Map<String, Integer> assignedSlots = new HashMap<String, Integer>();
 
     public InventoryItemListSetting(String name) {
@@ -35,7 +36,7 @@ public class InventoryItemListSetting extends ItemListSetting {
             return;
         }
         super.addItem(storageId);
-        assignedSlots.put(storageId, DEFAULT_ASSIGNED_SLOT);
+        assignedSlots.put(storageId, findAvailableSlot(DEFAULT_ASSIGNED_SLOT));
     }
 
     @Override
@@ -56,7 +57,25 @@ public class InventoryItemListSetting extends ItemListSetting {
         if (storageId == null || !getItems().contains(storageId)) {
             return;
         }
-        assignedSlots.put(storageId, slot == null || slot < 1 || slot > 9 ? DEFAULT_ASSIGNED_SLOT : slot);
+
+        int targetSlot = slot == null || slot < 1 || slot > HOTBAR_SIZE ? DEFAULT_ASSIGNED_SLOT : slot;
+        int previousSlot = getAssignedSlot(storageId);
+        if (targetSlot == previousSlot) {
+            return;
+        }
+
+        String displacedStorageId = null;
+        for (String otherStorageId : getItems()) {
+            if (!storageId.equals(otherStorageId) && getAssignedSlot(otherStorageId) == targetSlot) {
+                displacedStorageId = otherStorageId;
+                break;
+            }
+        }
+
+        assignedSlots.put(storageId, targetSlot);
+        if (displacedStorageId != null) {
+            assignedSlots.put(displacedStorageId, previousSlot);
+        }
     }
 
     public void moveItem(String storageId, int toIndex) {
@@ -119,7 +138,7 @@ public class InventoryItemListSetting extends ItemListSetting {
                     continue;
                 }
                 super.addItem(storageId);
-                assignedSlots.put(storageId, DEFAULT_ASSIGNED_SLOT);
+                assignedSlots.put(storageId, findAvailableSlot(DEFAULT_ASSIGNED_SLOT));
                 continue;
             }
 
@@ -141,12 +160,26 @@ public class InventoryItemListSetting extends ItemListSetting {
             int slot = DEFAULT_ASSIGNED_SLOT;
             if (object.has("slot") && object.get("slot").isJsonPrimitive()) {
                 int configuredSlot = object.get("slot").getAsInt();
-                if (configuredSlot >= 1 && configuredSlot <= 9) {
+                if (configuredSlot >= 1 && configuredSlot <= HOTBAR_SIZE) {
                     slot = configuredSlot;
                 }
             }
-            assignedSlots.put(storageId, slot);
+            assignedSlots.put(storageId, findAvailableSlot(slot));
         }
+    }
+
+    private int findAvailableSlot(int preferredSlot) {
+        if (!assignedSlots.containsValue(preferredSlot)) {
+            return preferredSlot;
+        }
+
+        for (int slot = 1; slot <= HOTBAR_SIZE; slot++) {
+            if (!assignedSlots.containsValue(slot)) {
+                return slot;
+            }
+        }
+
+        return preferredSlot;
     }
 
     @Override

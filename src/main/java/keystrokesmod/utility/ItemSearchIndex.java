@@ -2,15 +2,20 @@ package keystrokesmod.utility;
 
 import keystrokesmod.module.setting.impl.ItemListSetting;
 import net.minecraft.creativetab.CreativeTabs;
+import net.minecraft.init.Blocks;
 import net.minecraft.init.Items;
 import net.minecraft.item.Item;
+import net.minecraft.item.ItemAppleGold;
 import net.minecraft.item.ItemAxe;
+import net.minecraft.item.ItemBlock;
 import net.minecraft.item.ItemBow;
+import net.minecraft.item.ItemEgg;
 import net.minecraft.item.ItemHoe;
 import net.minecraft.item.ItemPickaxe;
 import net.minecraft.item.ItemShears;
 import net.minecraft.item.ItemSpade;
 import net.minecraft.item.ItemStack;
+import net.minecraft.item.ItemSnowball;
 import net.minecraft.item.ItemSword;
 import net.minecraft.item.ItemTool;
 import net.minecraft.util.ResourceLocation;
@@ -118,6 +123,30 @@ public final class ItemSearchIndex {
             @Override
             boolean matches(ItemStack stack) {
                 return stack != null && stack.getItem() instanceof ItemBow;
+            }
+        },
+        BLOCK("@category:block", "Blocks", new ItemStack(Blocks.wool)) {
+            @Override
+            boolean matches(ItemStack stack) {
+                return stack != null && stack.getItem() instanceof ItemBlock;
+            }
+        },
+        GAPPLE("@category:gapple", "Golden Apple", new ItemStack(Items.golden_apple)) {
+            @Override
+            boolean matches(ItemStack stack) {
+                return stack != null && stack.getItem() instanceof ItemAppleGold;
+            }
+        },
+        THROWABLE("@category:throwable", "Projectiles", new ItemStack(Items.snowball)) {
+            @Override
+            boolean matches(ItemStack stack) {
+                return stack != null && (stack.getItem() instanceof ItemSnowball || stack.getItem() instanceof ItemEgg);
+            }
+        },
+        PEARL("@category:pearl", "Ender Pearl", new ItemStack(Items.ender_pearl)) {
+            @Override
+            boolean matches(ItemStack stack) {
+                return stack != null && stack.getItem() == Items.ender_pearl;
             }
         },
         TOOL("@category:tool", "Tool", new ItemStack(Items.diamond_pickaxe)) {

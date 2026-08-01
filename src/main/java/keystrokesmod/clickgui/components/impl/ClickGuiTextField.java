@@ -13,9 +13,9 @@ import java.lang.reflect.Field;
 public class ClickGuiTextField {
     private static final float DEFAULT_TEXT_SCALE = 0.5f;
 
-    private static final int BACKGROUND_COLOR = 0xFF222222;
+    private static final int BACKGROUND_COLOR = 0xFF191919;
     private static final int FOCUSED_BACKGROUND_COLOR = 0xFF2A2A2A;
-    private static final int OUTLINE_COLOR = 0xFF3A3A3A;
+    private static final int OUTLINE_COLOR = 0xFF505050;
     private static final int FOCUSED_OUTLINE_COLOR = 0xFF555500;
     private static final int SELECTION_COLOR = 0x804A90E2;
     private static final int CURSOR_COLOR = 0xFFD0D0D0;
@@ -105,8 +105,8 @@ public class ClickGuiTextField {
         if (!visibleText.isEmpty()) {
             drawSelection(textLeft, top, backgroundBottom, renderer, visibleText, cursorPosition, selectionEnd, visibleStart, visibleEnd);
             drawScaledText(visibleText, textLeft, textY, textColor, renderer);
-        } else if (!textField.isFocused() && !placeholder.isEmpty()) {
-            drawScaledText("\u00A77" + placeholder, textLeft, textY, 0xAAAAAA, renderer);
+        } else if (!placeholder.isEmpty()) {
+            drawScaledText(placeholder, textLeft, textY, 0xFFB8B8B8, renderer);
         }
 
         if (textField.isFocused() && cursorVisible) {

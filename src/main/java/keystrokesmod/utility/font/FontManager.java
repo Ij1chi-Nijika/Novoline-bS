@@ -74,6 +74,10 @@ public final class FontManager {
         return getRendererForPixelHeight("Eclipse SF", pixelHeight);
     }
 
+    public static RavenFontRenderer getRendererForEclipseSfBold(float pixelHeight) {
+        return getRendererForPixelHeight("Eclipse SF Bold", pixelHeight);
+    }
+
     private static RavenFontRenderer getRenderer(String family, float fontSize) {
         float safeFontSize = Math.max(1.0f, fontSize);
         BundledFont bundledFont;

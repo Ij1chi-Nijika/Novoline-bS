@@ -90,6 +90,15 @@ public class InvManager extends Module {
     private final ButtonSetting stackItems;
     private final InventoryItemListSetting items;
     private final GroupSetting autoSortGroup;
+    private final SliderSetting swordSlot;
+    private final SliderSetting blockSlot;
+    private final SliderSetting gappleSlot;
+    private final SliderSetting projectileSlot;
+    private final SliderSetting bowSlot;
+    private final SliderSetting pearlSlot;
+    private final SliderSetting shovelSlot;
+    private final SliderSetting pickaxeSlot;
+    private final SliderSetting axeSlot;
     private static SliderSetting chestStealer;
     private static SliderSetting autoArmor;
     private static SliderSetting inventoryCleaner;
@@ -122,7 +131,16 @@ public class InvManager extends Module {
         this.registerSetting(targetCPS = new SliderSetting(autoSortGroup, "Target CPS", 10.0, 1.0, 20.0, 0.5));
         this.registerSetting(disableWhenComplete = new ButtonSetting(autoSortGroup, "Disable when complete", false, "Disable when complete"));
         this.registerSetting(stackItems = new ButtonSetting(autoSortGroup, "Stack items", false, "Stack items"));
-        this.registerSetting(items = new InventoryItemListSetting(autoSortGroup, "Items", "Items"));
+        this.registerSetting(swordSlot = new SliderSetting(autoSortGroup, "Sword slot", true, 1.0, 1.0, 9.0, 1.0));
+        this.registerSetting(blockSlot = new SliderSetting(autoSortGroup, "Blocks slot", true, 2.0, 1.0, 9.0, 1.0));
+        this.registerSetting(gappleSlot = new SliderSetting(autoSortGroup, "Gapple slot", true, 3.0, 1.0, 9.0, 1.0));
+        this.registerSetting(projectileSlot = new SliderSetting(autoSortGroup, "Projectiles slot", true, 4.0, 1.0, 9.0, 1.0));
+        this.registerSetting(bowSlot = new SliderSetting(autoSortGroup, "Bow slot", true, 5.0, 1.0, 9.0, 1.0));
+        this.registerSetting(pearlSlot = new SliderSetting(autoSortGroup, "Pearl slot", true, 6.0, 1.0, 9.0, 1.0));
+        this.registerSetting(shovelSlot = new SliderSetting(autoSortGroup, "Shovel slot", true, 7.0, 1.0, 9.0, 1.0));
+        this.registerSetting(pickaxeSlot = new SliderSetting(autoSortGroup, "Pickaxe slot", true, 8.0, 1.0, 9.0, 1.0));
+        this.registerSetting(axeSlot = new SliderSetting(autoSortGroup, "Axe slot", true, 9.0, 1.0, 9.0, 1.0));
+        items = new InventoryItemListSetting(autoSortGroup, "Items", "Items");
         this.registerSetting(chestStealer = new SliderSetting("Chest stealer", " tick", true, 3.0, 1.0, 20.0, 1.0));
         this.registerSetting(stealFromCustomChests = new ButtonSetting("Steal from custom chests", false));
         this.registerSetting(inventoryCleaner = new SliderSetting("Inventory cleaner", " tick", true, 5.0, 1.0, 20.0, 1.0));
@@ -556,6 +574,12 @@ public class InvManager extends Module {
             return -1;
         }
 
+        for (ConfiguredRule rule : getConfiguredRules()) {
+            if (ItemSearchIndex.matches(rule.storageId, stack)) {
+                return rule.hotbarSlot;
+            }
+        }
+
         for (String storageId : items.getItems()) {
             if (!ItemSearchIndex.matches(storageId, stack)) {
                 continue;
@@ -585,7 +609,7 @@ public class InvManager extends Module {
         }
 
         Item item = itemStack.getItem();
-        return items.matches(itemStack)
+        return isManagedStack(itemStack)
                 || item instanceof ItemBlock
                 || item instanceof ItemAppleGold
                 || item instanceof ItemSnowball
@@ -876,7 +900,8 @@ public class InvManager extends Module {
                     public boolean isValid(SnapshotContext current, InvManager module) {
                         return current.snapshot.carried == null
                                 && ItemSearchIndex.matches(selectedAssignment.storageId, current.snapshot.getSlot(sourceInventoryIndex))
-                                && (sourceInventoryIndex >= HOTBAR_SIZE || !module.isCorrectHotbarSlot(current, sourceInventoryIndex));
+                                && (sourceInventoryIndex >= HOTBAR_SIZE
+                                || !module.isProtectedHotbarSource(current, selectedAssignment, sourceInventoryIndex));
                     }
                 },
                 NO_OP,
@@ -1108,7 +1133,7 @@ public class InvManager extends Module {
                 continue;
             }
 
-            if (inventoryIndex < HOTBAR_SIZE && isCorrectHotbarSlot(context, inventoryIndex)) {
+            if (inventoryIndex < HOTBAR_SIZE && isProtectedHotbarSource(context, assignment, inventoryIndex)) {
                 continue;
             }
 
@@ -1147,7 +1172,8 @@ public class InvManager extends Module {
                     public boolean isValid(SnapshotContext current, InvManager module) {
                         return current.snapshot.carried == null
                                 && ItemSearchIndex.matches(storageId, current.snapshot.getSlot(sourceInventoryIndex))
-                                && (sourceInventoryIndex >= HOTBAR_SIZE || !module.isCorrectHotbarSlot(current, sourceInventoryIndex));
+                                && (sourceInventoryIndex >= HOTBAR_SIZE
+                                || !module.isProtectedHotbarSource(current, assignment, sourceInventoryIndex));
                     }
                 },
                 new StepHook() {
@@ -1705,9 +1731,17 @@ public class InvManager extends Module {
     private SlotAssignment[] resolveAssignments(InventorySnapshot snapshot) {
         SlotAssignment[] assignments = new SlotAssignment[HOTBAR_SIZE];
         List<String> orderedItems = items.getItems();
+        int priorityIndex = 0;
 
-        for (int priorityIndex = 0; priorityIndex < orderedItems.size(); priorityIndex++) {
-            String storageId = orderedItems.get(priorityIndex);
+        for (ConfiguredRule rule : getConfiguredRules()) {
+            if (assignments[rule.hotbarSlot] == null && hasMatchingStack(snapshot, rule.storageId)) {
+                assignments[rule.hotbarSlot] = new SlotAssignment(rule.hotbarSlot, rule.storageId, priorityIndex);
+            }
+            priorityIndex++;
+        }
+
+        for (int customIndex = 0; customIndex < orderedItems.size(); customIndex++) {
+            String storageId = orderedItems.get(customIndex);
             Integer assignedSlot = items.getAssignedSlot(storageId);
             if (assignedSlot == null) {
                 continue;
@@ -1719,7 +1753,7 @@ public class InvManager extends Module {
             }
 
             if (hasMatchingStack(snapshot, storageId)) {
-                assignments[hotbarSlot] = new SlotAssignment(hotbarSlot, storageId, priorityIndex);
+                assignments[hotbarSlot] = new SlotAssignment(hotbarSlot, storageId, priorityIndex + customIndex);
             }
         }
 
@@ -1744,8 +1778,74 @@ public class InvManager extends Module {
         return assignment != null && ItemSearchIndex.matches(assignment.storageId, context.snapshot.getSlot(hotbarSlot));
     }
 
+    private boolean isProtectedHotbarSource(SnapshotContext context, SlotAssignment requester, int hotbarSlot) {
+        if (!isCorrectHotbarSlot(context, hotbarSlot)) {
+            return false;
+        }
+
+        SlotAssignment holder = context.assignments[hotbarSlot];
+        if (holder == requester) {
+            return true;
+        }
+
+        return compareAssignmentPreference(holder, requester) <= 0;
+    }
+
+    private static int compareAssignmentPreference(SlotAssignment first, SlotAssignment second) {
+        int specificityComparison = Integer.compare(
+                getRuleSpecificity(second.storageId),
+                getRuleSpecificity(first.storageId)
+        );
+        if (specificityComparison != 0) {
+            return specificityComparison;
+        }
+        return Integer.compare(first.priorityIndex, second.priorityIndex);
+    }
+
+    private static int getRuleSpecificity(String storageId) {
+        if (storageId == null) {
+            return 0;
+        }
+        if (!storageId.startsWith("@") && !ItemSearchIndex.isWildcard(storageId)) {
+            return 3;
+        }
+        if ("@category:tool".equals(storageId) || ItemSearchIndex.isWildcard(storageId)) {
+            return 1;
+        }
+        return 2;
+    }
+
     private boolean isManagedStack(ItemStack stack) {
-        return stack != null && items.matches(stack);
+        if (stack == null) {
+            return false;
+        }
+        for (ConfiguredRule rule : getConfiguredRules()) {
+            if (ItemSearchIndex.matches(rule.storageId, stack)) {
+                return true;
+            }
+        }
+        return items.matches(stack);
+    }
+
+    private List<ConfiguredRule> getConfiguredRules() {
+        List<ConfiguredRule> rules = new ArrayList<ConfiguredRule>(9);
+        addConfiguredRule(rules, "@category:sword", swordSlot);
+        addConfiguredRule(rules, "@category:block", blockSlot);
+        addConfiguredRule(rules, "@category:gapple", gappleSlot);
+        addConfiguredRule(rules, "@category:throwable", projectileSlot);
+        addConfiguredRule(rules, "@category:bow", bowSlot);
+        addConfiguredRule(rules, "@category:pearl", pearlSlot);
+        addConfiguredRule(rules, "@category:shovel", shovelSlot);
+        addConfiguredRule(rules, "@category:pickaxe", pickaxeSlot);
+        addConfiguredRule(rules, "@category:axe", axeSlot);
+        return rules;
+    }
+
+    private static void addConfiguredRule(List<ConfiguredRule> rules, String storageId, SliderSetting slotSetting) {
+        int configuredSlot = (int) slotSetting.getInput();
+        if (configuredSlot >= 1 && configuredSlot <= HOTBAR_SIZE) {
+            rules.add(new ConfiguredRule(storageId, configuredSlot - 1));
+        }
     }
 
     private boolean isAssignedTargetSatisfied(SnapshotContext context, SlotAssignment assignment, ItemStack targetStack) {
@@ -1775,7 +1875,7 @@ public class InvManager extends Module {
                 continue;
             }
 
-            if (inventoryIndex < HOTBAR_SIZE && isCorrectHotbarSlot(context, inventoryIndex)) {
+            if (inventoryIndex < HOTBAR_SIZE && isProtectedHotbarSource(context, assignment, inventoryIndex)) {
                 continue;
             }
 
@@ -2120,6 +2220,16 @@ public class InvManager extends Module {
             this.hotbarSlot = hotbarSlot;
             this.storageId = storageId;
             this.priorityIndex = priorityIndex;
+        }
+    }
+
+    private static final class ConfiguredRule {
+        final String storageId;
+        final int hotbarSlot;
+
+        ConfiguredRule(String storageId, int hotbarSlot) {
+            this.storageId = storageId;
+            this.hotbarSlot = hotbarSlot;
         }
     }
 
