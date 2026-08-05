@@ -172,7 +172,7 @@ public class RotationHelper {
             return;
         }
 
-        if (this.serverYaw != null){
+        if (this.serverYaw != null && !event.preQuantized){
             if (Math.abs(this.serverYaw - mc.thePlayer.rotationYaw) >= 1.0f) {
                 final int randomFactor = (int) Settings.randomYawFactor.getInput();
                 if (randomFactor != 0) {
@@ -182,14 +182,16 @@ public class RotationHelper {
             }
         }
 
-        float[] fixed = RotationUtils.fixRotation(
-                this.serverYaw == null ? mc.thePlayer.rotationYaw : this.serverYaw,
-                this.serverPitch == null ? mc.thePlayer.rotationPitch : this.serverPitch,
-                RotationUtils.serverRotations[0],
-                RotationUtils.serverRotations[1]
-        );
-        this.serverYaw = fixed[0];
-        this.serverPitch = fixed[1];
+        if (!event.preQuantized) {
+            float[] fixed = RotationUtils.fixRotation(
+                    this.serverYaw == null ? mc.thePlayer.rotationYaw : this.serverYaw,
+                    this.serverPitch == null ? mc.thePlayer.rotationPitch : this.serverPitch,
+                    RotationUtils.serverRotations[0],
+                    RotationUtils.serverRotations[1]
+            );
+            this.serverYaw = fixed[0];
+            this.serverPitch = fixed[1];
+        }
 
         if (this.serverYaw != mc.thePlayer.rotationYaw && (event.yaw == null || !event.yaw.isNaN())) {
             this.setRotations = true;

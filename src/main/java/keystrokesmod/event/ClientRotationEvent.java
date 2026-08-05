@@ -6,6 +6,8 @@ public class ClientRotationEvent extends Event {
     public Float yaw;
     public Float pitch;
     public boolean scriptRotations;
+    /** Rotation was already quantized by a module-specific rotation pipeline. */
+    public boolean preQuantized;
 
     public ClientRotationEvent(Float yaw, Float pitch) {
         this.yaw = yaw;

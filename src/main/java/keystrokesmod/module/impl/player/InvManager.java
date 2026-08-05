@@ -44,6 +44,7 @@ import java.util.List;
 
 public class InvManager extends Module {
     private static final int HOTBAR_SIZE = InventoryPlayer.getHotbarSize();
+    private static final int MAX_INSTANT_ACTIONS = 512;
     private static final double QUALITY_EPSILON = 1.0E-6D;
 
     private static final Comparator<PlannedAction> ACTION_COMPARATOR = (first, second) -> {
@@ -85,7 +86,7 @@ public class InvManager extends Module {
         return Integer.compare(first.type.ordinal(), second.type.ordinal());
     };
 
-    private final SliderSetting targetCPS;
+    private final SliderSetting autoSortSpeed;
     private final ButtonSetting disableWhenComplete;
     private final ButtonSetting stackItems;
     private final InventoryItemListSetting items;
@@ -111,7 +112,6 @@ public class InvManager extends Module {
 
     private PlannedAction currentAction;
     private int cursorRecoveryInventoryIndex = -1;
-    private double windowClickBudget;
     private boolean sessionOpen;
     private SessionState sessionState = SessionState.ACTIVE;
     private long ticks = 0L;
@@ -126,9 +126,9 @@ public class InvManager extends Module {
         this.registerSetting(closeChest = new ButtonSetting("Close chest", false));
         this.registerSetting(closeInventory = new ButtonSetting("Close inventory", false));
         this.registerSetting(disableInLobby = new ButtonSetting("Disable in lobby", true));
-        this.registerSetting(autoArmor = new SliderSetting("Auto armor", " tick", true, 3.0, 1.0, 20.0, 1.0));
+        this.registerSetting(autoArmor = new SliderSetting("Auto armor", " tick", true, 3.0, 0.0, 20.0, 1.0));
         this.registerSetting(autoSortGroup = new GroupSetting("Auto sort"));
-        this.registerSetting(targetCPS = new SliderSetting(autoSortGroup, "Target CPS", 10.0, 1.0, 20.0, 0.5));
+        this.registerSetting(autoSortSpeed = new SliderSetting(autoSortGroup, "Speed", " tick", 2.0, 0.0, 20.0, 1.0));
         this.registerSetting(disableWhenComplete = new ButtonSetting(autoSortGroup, "Disable when complete", false, "Disable when complete"));
         this.registerSetting(stackItems = new ButtonSetting(autoSortGroup, "Stack items", false, "Stack items"));
         this.registerSetting(swordSlot = new SliderSetting(autoSortGroup, "Sword slot", true, 1.0, 1.0, 9.0, 1.0));
@@ -141,9 +141,9 @@ public class InvManager extends Module {
         this.registerSetting(pickaxeSlot = new SliderSetting(autoSortGroup, "Pickaxe slot", true, 8.0, 1.0, 9.0, 1.0));
         this.registerSetting(axeSlot = new SliderSetting(autoSortGroup, "Axe slot", true, 9.0, 1.0, 9.0, 1.0));
         items = new InventoryItemListSetting(autoSortGroup, "Items", "Items");
-        this.registerSetting(chestStealer = new SliderSetting("Chest stealer", " tick", true, 3.0, 1.0, 20.0, 1.0));
+        this.registerSetting(chestStealer = new SliderSetting("Chest stealer", " tick", true, 3.0, 0.0, 20.0, 1.0));
         this.registerSetting(stealFromCustomChests = new ButtonSetting("Steal from custom chests", false));
-        this.registerSetting(inventoryCleaner = new SliderSetting("Inventory cleaner", " tick", true, 5.0, 1.0, 20.0, 1.0));
+        this.registerSetting(inventoryCleaner = new SliderSetting("Inventory cleaner", " tick", true, 5.0, 0.0, 20.0, 1.0));
         this.registerSetting(cleanKey = new KeySetting("Clean key", 1002));
         this.closetModule = true;
     }
@@ -267,15 +267,30 @@ public class InvManager extends Module {
             return;
         }
 
-        if (tryAutoArmorAction()) {
+        if (autoArmor.getInput() == 0.0) {
+            for (int actions = 0; actions < MAX_INSTANT_ACTIONS && tryAutoArmorAction(); actions++) {
+                // Zero tick intentionally exhausts every currently valid armor action.
+            }
+        }
+        else if (tryAutoArmorAction()) {
             return;
         }
 
-        if (runInventorySorterTick()) {
+        if (autoSortSpeed.getInput() == 0.0) {
+            for (int actions = 0; actions < MAX_INSTANT_ACTIONS && runInventorySorterTick(); actions++) {
+                // Zero tick intentionally completes the sorting plan in this update.
+            }
+        }
+        else if (runInventorySorterTick()) {
             return;
         }
 
-        if (tryInventoryCleanerAction()) {
+        if (inventoryCleaner.getInput() == 0.0) {
+            for (int actions = 0; actions < MAX_INSTANT_ACTIONS && tryInventoryCleanerAction(); actions++) {
+                // Zero tick intentionally removes every currently invalid item.
+            }
+        }
+        else if (tryInventoryCleanerAction()) {
             return;
         }
 
@@ -330,14 +345,11 @@ public class InvManager extends Module {
             }
         }
 
-        int clickBudget = consumeWindowClickBudget();
-        if (clickBudget <= 0) {
-            return true;
-        }
-
         if (!executeCurrentStep(context)) {
             return currentAction != null || context.snapshot.carried != null;
         }
+
+        scheduleActionDelay(autoSortSpeed);
 
         return true;
     }
@@ -501,9 +513,18 @@ public class InvManager extends Module {
             return;
         }
 
+        int limit = chestStealer.getInput() == 0.0 ? MAX_INSTANT_ACTIONS : 1;
+        for (int actions = 0; actions < limit; actions++) {
+            if (!tryStealChestItem()) return;
+        }
+    }
+
+    private boolean tryStealChestItem() {
+        if (!(mc.thePlayer.openContainer instanceof ContainerChest)) return false;
+
         IInventory chestInventory = ((ContainerChest)mc.thePlayer.openContainer).getLowerChestInventory();
         if (!stealFromCustomChests.isToggled() && !chestInventory.getName().contains("Chest")) {
-            return;
+            return false;
         }
 
         updateCurrentArmor();
@@ -514,7 +535,7 @@ public class InvManager extends Module {
         if (playerData.size != playerData.filled) {
             if (chestData.swordData[1] != -1.0) {
                 stealChestItem((int)chestData.swordData[0], chestData.inventory.getStackInSlot((int)chestData.swordData[0]), playerData);
-                return;
+                return true;
             }
 
             for (int k = 0; k < chestData.armorData[0].length; ++k) {
@@ -526,7 +547,7 @@ public class InvManager extends Module {
                 if (chestData.armorData[1][k] > currentArmor.defenceLevel) {
                     int chestSlot = chestData.armorData[0][k];
                     stealChestItem(chestSlot, chestData.inventory.getStackInSlot(chestSlot), playerData);
-                    return;
+                    return true;
                 }
             }
 
@@ -537,7 +558,7 @@ public class InvManager extends Module {
                 }
 
                 stealChestItem(k, itemStack, playerData);
-                return;
+                return true;
             }
         }
         else {
@@ -549,7 +570,7 @@ public class InvManager extends Module {
 
                 if (canMergeChestStackIntoInventory(chestStack, playerData)) {
                     stealChestItem(k, chestStack, playerData);
-                    return;
+                    return true;
                 }
             }
         }
@@ -557,6 +578,7 @@ public class InvManager extends Module {
         if (closeChest.isToggled()) {
             closeGui = true;
         }
+        return false;
     }
 
     private void stealChestItem(int chestSlot, ItemStack stack, InventoryData playerData) {
@@ -597,10 +619,14 @@ public class InvManager extends Module {
     }
 
     private void delayedClick(int slotId, int button, int mode, SliderSetting delaySlider) {
-        nextDelay = (long)delaySlider.getInput();
-        ticks = 0L;
+        scheduleActionDelay(delaySlider);
         closeSession();
         click(slotId, button, mode);
+    }
+
+    private void scheduleActionDelay(SliderSetting delaySlider) {
+        nextDelay = Math.max(0L, (long) delaySlider.getInput());
+        ticks = 0L;
     }
 
     private boolean isProtectedInventoryItem(ItemStack itemStack) {
@@ -753,7 +779,6 @@ public class InvManager extends Module {
     private void resetRuntimeState() {
         currentAction = null;
         cursorRecoveryInventoryIndex = -1;
-        windowClickBudget = 0.0;
         sessionOpen = false;
         sessionState = SessionState.ACTIVE;
     }
@@ -762,7 +787,6 @@ public class InvManager extends Module {
         sessionOpen = true;
         currentAction = null;
         cursorRecoveryInventoryIndex = -1;
-        windowClickBudget = 0.0;
         sessionState = SessionState.ACTIVE;
 
         if (disableWhenComplete.isToggled()) {
@@ -777,24 +801,11 @@ public class InvManager extends Module {
         sessionOpen = false;
         currentAction = null;
         cursorRecoveryInventoryIndex = -1;
-        windowClickBudget = 0.0;
         sessionState = SessionState.ACTIVE;
     }
 
     private boolean ownsCarriedStack() {
         return currentAction != null || cursorRecoveryInventoryIndex >= 0;
-    }
-
-    private int consumeWindowClickBudget() {
-        windowClickBudget += Math.max(0.0, targetCPS.getInput()) / 20.0;
-        int clicks = Math.min(1, (int) windowClickBudget);
-        if (clicks <= 0) {
-            return 0;
-        }
-
-        windowClickBudget -= clicks;
-        windowClickBudget = Math.min(windowClickBudget, 1.0);
-        return clicks;
     }
 
     private boolean executeCurrentStep(SnapshotContext context) {
