@@ -126,6 +126,8 @@ public class Scaffold extends Module {
     private int airTicks;
     private boolean pendingSpeedLimitRotation;
     private int forwardRotateTicksLeft;
+    private boolean tellyFacingPlayer;
+    private boolean tellyLandedThisTick;
     private int legitEdgeState;
     private int legitEdgeTimer;
     private boolean legitWasOnEdge;
@@ -203,6 +205,8 @@ public class Scaffold extends Module {
         airTicks = 0;
         pendingSpeedLimitRotation = false;
         forwardRotateTicksLeft = 0;
+        tellyFacingPlayer = false;
+        tellyLandedThisTick = false;
         legitEdgeState = 0;
         legitEdgeTimer = 0;
         legitWasOnEdge = false;
@@ -386,6 +390,13 @@ public class Scaffold extends Module {
                 && (int) rotationMode.getInput() != 0) {
             event.setYaw(movementFixYaw);
         }
+        if ((int) mode.getInput() == 1 && isMoving()) {
+            // Movement correction can turn forward input into strafe input and make
+            // vanilla cancel sprint. Preserve its corrected yaw and only restore
+            // the sprint state and sprint-jump impulse.
+            event.setSprint(true);
+            mc.thePlayer.setSprinting(true);
+        }
         if ((int) mode.getInput() != 1 && shouldStopSprint()) event.setSprint(false);
     }
 
@@ -469,6 +480,7 @@ public class Scaffold extends Module {
     }
 
     private void updateState() {
+        tellyLandedThisTick = false;
         if (rotationTick > 0) rotationTick--;
         if (forwardRotateTicksLeft > 0) forwardRotateTicksLeft--;
         if (mc.thePlayer.onGround) {
@@ -480,6 +492,8 @@ public class Scaffold extends Module {
             if (wasInAir) {
                 tellyJumpDelayTimer = (int) mode.getInput() == 1
                         ? (jumpDelayOverride >= 0 ? jumpDelayOverride : (int) jumpDelay.getInput()) : 0;
+                tellyFacingPlayer = (int) mode.getInput() == 1;
+                tellyLandedThisTick = tellyFacingPlayer;
                 wasInAir = false;
             }
             if (tellyJumpDelayTimer > 0) tellyJumpDelayTimer--;
@@ -489,6 +503,7 @@ public class Scaffold extends Module {
             }
         } else {
             if (speedLimit.isToggled()) airTicks++;
+            tellyFacingPlayer = false;
             wasInAir = true;
         }
         if ((int) mode.getInput() == 1 && mc.thePlayer.onGround && isMoving()
@@ -517,6 +532,15 @@ public class Scaffold extends Module {
     private float[] getTellyRotation(float eventYaw, float eventPitch) {
         float targetYaw = yaw;
         float targetPitch = pitch;
+        boolean startingJump = !tellyLandedThisTick && isTowering()
+                && tellyJumpDelayTimer <= 0 && forwardRotateTicksLeft <= 0;
+
+        if (tellyFacingPlayer && !startingJump) {
+            targetYaw = tellyQuantize(eventYaw
+                    + MathHelper.wrapAngleTo180_float(mc.thePlayer.rotationYaw - eventYaw));
+            targetPitch = tellyQuantize(mc.thePlayer.rotationPitch);
+            return new float[]{targetYaw, targetPitch};
+        }
 
         if (speedLimit.isToggled() && forwardRotateTicksLeft > 0) {
             float yawDelta = MathHelper.wrapAngleTo180_float(mc.thePlayer.rotationYaw - eventYaw);
@@ -533,11 +557,14 @@ public class Scaffold extends Module {
             }
         }
 
-        if (isTowering() && tellyJumpDelayTimer <= 0 && forwardRotateTicksLeft <= 0) {
+        if (startingJump) {
+            tellyFacingPlayer = false;
             if (!speedLimit.isToggled()) {
-                float yawDelta = MathHelper.wrapAngleTo180_float(mc.thePlayer.rotationYaw - eventYaw);
-                targetYaw = tellyQuantize(eventYaw + yawDelta * random(0.98F, 0.99F));
-                targetPitch = tellyQuantize(random(30.0F, 80.0F));
+                float yawDelta = MathHelper.wrapAngleTo180_float(yaw - eventYaw);
+                targetYaw = tellyQuantize(eventYaw + MathHelper.clamp_float(yawDelta, -45.0F, 45.0F));
+                float pitchDelta = pitch - eventPitch;
+                targetPitch = tellyQuantize(eventPitch
+                        + MathHelper.clamp_float(pitchDelta, -45.0F, 45.0F));
                 rotationTick = 3;
                 towering = true;
             } else {
