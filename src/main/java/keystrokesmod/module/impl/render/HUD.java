@@ -73,6 +73,11 @@ public class HUD extends Module {
     public static ButtonSetting novolineFps;
     public static ButtonSetting novolineInventory;
     public static ButtonSetting novolineTargets;
+    public static ButtonSetting novolineNotifications;
+    public static SliderSetting novolineNotificationDuration;
+    public static ButtonSetting novolineToggleSound;
+    public static SliderSetting novolineNotificationsX;
+    public static SliderSetting novolineNotificationsY;
     public static SliderSetting novolineInventoryX;
     public static SliderSetting novolineInventoryY;
     public static SliderSetting novolineTargetsX;
@@ -145,6 +150,11 @@ public class HUD extends Module {
         this.registerSetting(novolineFps = new ButtonSetting("FPS", true));
         this.registerSetting(novolineInventory = new ButtonSetting("Inventory", false));
         this.registerSetting(novolineTargets = new ButtonSetting("Targets list", false));
+        this.registerSetting(novolineNotifications = new ButtonSetting("Notifications", true));
+        this.registerSetting(novolineNotificationDuration = new SliderSetting("Notification time", 2.0, 0.5, 5.0, 0.1));
+        this.registerSetting(novolineToggleSound = new ButtonSetting("Toggle sound", true));
+        this.registerSetting(novolineNotificationsX = new SliderSetting("Notification right", 8, 0, 1000, 1));
+        this.registerSetting(novolineNotificationsY = new SliderSetting("Notification bottom", 8, 0, 1000, 1));
         this.registerSetting(novolineInventoryX = new SliderSetting("Inventory X", 160, 0, 1000, 1));
         this.registerSetting(novolineInventoryY = new SliderSetting("Inventory Y", 120, 0, 1000, 1));
         this.registerSetting(novolineTargetsX = new SliderSetting("Targets X", 12, 0, 1000, 1));
@@ -179,6 +189,15 @@ public class HUD extends Module {
         }
         if (scoreboardServerIp != null && replaceScoreboardServerIp != null) {
             scoreboardServerIp.setVisible(replaceScoreboardServerIp.isToggled(), this);
+        }
+        if (novolineNotificationDuration != null && novolineNotifications != null) {
+            novolineNotificationDuration.setVisible(novolineNotifications.isToggled(), this);
+        }
+        if (novolineNotificationsX != null && novolineNotifications != null) {
+            novolineNotificationsX.setVisible(novolineNotifications.isToggled(), this);
+        }
+        if (novolineNotificationsY != null && novolineNotifications != null) {
+            novolineNotificationsY.setVisible(novolineNotifications.isToggled(), this);
         }
     }
 
@@ -218,6 +237,9 @@ public class HUD extends Module {
             lastHudFontScale = currentFontScale;
             ModuleManager.sort();
         }
+
+        // Render toasts over ClickGUI as well; most module state changes originate there.
+        NotificationManager.render();
 
         if (mc.currentScreen != null || mc.gameSettings.showDebugInfo) {
             return;

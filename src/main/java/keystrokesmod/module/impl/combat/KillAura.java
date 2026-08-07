@@ -90,7 +90,7 @@ public class KillAura extends Module {
     private final String[] modes = new String[]{"Single", "Switch"};
     private final String[] rotationModes = new String[]{"Silent", "Lock view", "None"};
     private String[] sortModes = new String[]{"Distance", "Health", "Hurt time", "Yaw"};
-    private String[] autoBlockModes = new String[]{"Vanilla", "Spoof", "Hypixel", "Blink", "Interact", "Swap", "Legit", "Fake", "Hypixel (Without NoSlow)"};
+    private String[] autoBlockModes = new String[]{"Vanilla", "Spoof", "Hypixel", "Blink", "Interact", "Swap", "Legit", "Fake", "WatchDog"};
 
     public static EntityLivingBase target;
     public static EntityLivingBase attackingEntity;
@@ -119,12 +119,12 @@ public class KillAura extends Module {
     private LagRequest autoBlockBlinkRequest;
     private int autoBlockLastMode = -1;
     private int autoBlockHypixelTick;
-    private boolean autoBlockHypixelInitialized;
     private boolean autoBlockHypixelSkipAttack;
+    private boolean autoBlockHypixelReblock;
 
     public KillAura() {
         super("Kill Aura", category.combat);
-        this.registerSetting(mode = new SliderSetting("Mode", 0, modes));
+        this.registerSetting(mode = new SliderSetting("Attack mode", 0, modes, "Mode"));
         this.registerSetting(minCPS = new SliderSetting("Minimum CPS", 14.0, 1.0, 20.0, 1.0));
         this.registerSetting(maxCPS = new SliderSetting("Maximum CPS", 14.0, 1.0, 20.0, 1.0));
         this.registerSetting(fov = new SliderSetting("FOV", "°", 360.0, 30.0, 360.0, 4.0));
@@ -159,10 +159,7 @@ public class KillAura extends Module {
 
     @Override
     public String getInfo() {
-        if (rotationMode.getInput() == 2) {
-            return (int) this.fov.getInput() + fov.getSuffix();
-        }
-        return rotationModes[(int) rotationMode.getInput()];
+        return modes[(int) mode.getInput()];
     }
 
     @Override
@@ -239,32 +236,36 @@ public class KillAura extends Module {
     public void onPrePlayerInteract(PrePlayerInteractEvent e) {
         handleAutoBlockPrePlayerInteract();
         if (shouldSkipHypixelWithoutNoSlowAttack()) return;
-        if (Velocity.stoppedBlock) return;
-        if (Velocity.extraAttacked && isAutoBlockActive()) {
-            Velocity.extraAttacked = false;
-            return;
-        }
-        if (!basicCondition() || !settingCondition() || target == null || target.isDead || target.deathTime > 0) return;
-        targetDistance = RotationUtils.distanceFromEyeToClosestOnAABB(target);
-        if (targetDistance > swingRange.getInput()) return;
-        if (notUsingItem.isToggled() && mc.thePlayer.isUsingItem()) return;
+        Entity hypixelInteractionTarget = null;
+        try {
+            if (Velocity.stoppedBlock) return;
+            if (Velocity.extraAttacked && isAutoBlockActive()) {
+                Velocity.extraAttacked = false;
+                return;
+            }
+            if (!basicCondition() || !settingCondition() || target == null || target.isDead || target.deathTime > 0) return;
+            targetDistance = RotationUtils.distanceFromEyeToClosestOnAABB(target);
+            if (targetDistance > swingRange.getInput()) return;
+            if (notUsingItem.isToggled() && mc.thePlayer.isUsingItem()) return;
 
-        long now = System.currentTimeMillis();
-        if (nextClickTime == 0) {
-            nextClickTime = now;
-        }
-        if (now < nextClickTime) return;
-        nextClickTime = now + nextDelay();
+            long now = System.currentTimeMillis();
+            if (nextClickTime == 0) {
+                nextClickTime = now;
+            }
+            if (now < nextClickTime) return;
+            nextClickTime = now + nextDelay();
 
-        mc.thePlayer.swingItem();
-        if (targetDistance > attackRange.getInput() || !isRotationOnTarget(target, attackYaw, attackPitch)) return;
+            mc.thePlayer.swingItem();
+            if (targetDistance > attackRange.getInput() || !isRotationOnTarget(target, attackYaw, attackPitch)) return;
 
-        prepareAutoBlockAttack(target);
-        mc.playerController.attackEntity(mc.thePlayer, target);
-        hitRegistered = true;
-        if (isHypixelWithoutNoSlow(getAutoBlockMode()) && isAutoBlockReady()) {
-            startAutoBlock(mc.thePlayer.getHeldItem());
-            autoBlockHypixelTick = 1;
+            prepareAutoBlockAttack(target);
+            mc.playerController.attackEntity(mc.thePlayer, target);
+            hitRegistered = true;
+            if (isHypixelWithoutNoSlow(getAutoBlockMode())) {
+                hypixelInteractionTarget = target;
+            }
+        } finally {
+            finishHypixelWithoutNoSlowCycle(hypixelInteractionTarget);
         }
     }
 
@@ -326,7 +327,7 @@ public class KillAura extends Module {
             mc.thePlayer.stopUsingItem();
             return;
         }
-        if (mode == 7) return;
+        if (mode == 7 || isHypixelWithoutNoSlow(mode)) return;
 
         if (mode == 1) { // Spoof
             stopAutoBlock(false);
@@ -370,19 +371,29 @@ public class KillAura extends Module {
         if (isHypixelWithoutNoSlow(mode)) {
             autoBlockVisualBlocking = true;
             autoBlockHypixelSkipAttack = false;
-            if (!autoBlockHypixelInitialized) {
-                autoBlockHypixelInitialized = true;
-                autoBlockHypixelTick = 0;
-                return;
-            }
-            if (autoBlockHypixelTick == 1) {
-                autoBlockHypixelSkipAttack = true;
-                autoBlockHypixelTick = 2;
-                return;
-            }
-            if (autoBlockHypixelTick == 2) {
-                stopAutoBlock(true);
-                autoBlockHypixelTick = 0;
+            autoBlockHypixelReblock = false;
+            switch (autoBlockHypixelTick) {
+                case 0:
+                    // Leader-Lite blockTick 0: release the previous blink, then
+                    // attack/interact/reblock at the end of this interaction pass.
+                    releaseAutoBlockBlink();
+                    autoBlockHypixelReblock = !autoBlockServerBlocking;
+                    autoBlockHypixelSkipAttack = autoBlockServerBlocking;
+                    autoBlockHypixelTick = 1;
+                    break;
+                case 1:
+                    // Leader-Lite blockTick 1: keep blocking and skip the attack.
+                    autoBlockHypixelSkipAttack = true;
+                    autoBlockHypixelTick = 2;
+                    break;
+                case 2:
+                default:
+                    // Leader-Lite blockTick 2: blink the release and any attack
+                    // generated later in this same interaction pass.
+                    startAutoBlockBlink();
+                    stopAutoBlock(true);
+                    autoBlockHypixelTick = 0;
+                    break;
             }
             return;
         }
@@ -419,6 +430,44 @@ public class KillAura extends Module {
     private boolean shouldSkipHypixelWithoutNoSlowAttack() {
         return isAutoBlockEnabled() && isHypixelWithoutNoSlow(getAutoBlockMode())
                 && autoBlockHypixelSkipAttack;
+    }
+
+    private void finishHypixelWithoutNoSlowCycle(Entity attackedTarget) {
+        if (!autoBlockHypixelReblock) return;
+        autoBlockHypixelReblock = false;
+
+        if (Velocity.stoppedBlock || !isAutoBlockReady() || !basicCondition() || !settingCondition()
+                || target == null || target.isDead || target.deathTime > 0) return;
+
+        if (attackedTarget != null) {
+            sendHypixelWithoutNoSlowInteraction(attackedTarget);
+        } else {
+            startAutoBlock(mc.thePlayer.getHeldItem());
+        }
+    }
+
+    /**
+     * Leader-Lite's interactAttack sequence: ray trace the attacked entity using
+     * the aura rotation, send INTERACT_AT and INTERACT, then start sword blocking.
+     */
+    private void sendHypixelWithoutNoSlowInteraction(Entity entity) {
+        if (entity == null || entity.isDead) return;
+
+        Vec3 eyes = mc.thePlayer.getPositionEyes(1.0F);
+        Vec3 look = RotationUtils.getVectorForRotation(attackPitch, attackYaw);
+        Vec3 rayEnd = eyes.addVector(look.xCoord * 8.0, look.yCoord * 8.0, look.zCoord * 8.0);
+        MovingObjectPosition intercept = entity.getEntityBoundingBox().calculateIntercept(eyes, rayEnd);
+        if (intercept == null) return;
+
+        Vec3 relativeHit = new Vec3(
+                intercept.hitVec.xCoord - entity.posX,
+                intercept.hitVec.yCoord - entity.posY,
+                intercept.hitVec.zCoord - entity.posZ
+        );
+        ((IAccessorPlayerControllerMP) mc.playerController).callSyncCurrentPlayItem();
+        mc.thePlayer.sendQueue.addToSendQueue(new C02PacketUseEntity(entity, relativeHit));
+        mc.thePlayer.sendQueue.addToSendQueue(new C02PacketUseEntity(entity, C02PacketUseEntity.Action.INTERACT));
+        startAutoBlock(mc.thePlayer.getHeldItem());
     }
 
     private int getAutoBlockMode() {
@@ -550,8 +599,8 @@ public class KillAura extends Module {
         autoBlockTarget = null;
         autoBlockLastMode = -1;
         autoBlockHypixelTick = 0;
-        autoBlockHypixelInitialized = false;
         autoBlockHypixelSkipAttack = false;
+        autoBlockHypixelReblock = false;
         ReflectionUtils.setItemInUse(false);
     }
 

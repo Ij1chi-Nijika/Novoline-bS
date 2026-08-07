@@ -60,7 +60,12 @@ public class Scaffold extends Module {
     };
     private static final double[] PREDICTION_OFFSETS = {0.1, 0.3, 0.5, 0.7, 0.9};
     private static final Random LEADER_RANDOM = new Random();
-    private static final String[] MODES = {"Normal", "Telly", "Snap", "Legit"};
+    private static final int MODE_NORMAL = 0;
+    private static final int MODE_KEEP_Y = 1;
+    private static final int MODE_SNAP = 2;
+    private static final int MODE_LEGIT = 3;
+    private static final int MODE_TELLY = 4;
+    private static final String[] MODES = {"Normal", "KeepY", "Snap", "Legit", "Telly"};
     private static final String[] ROTATION_MODES = {"None", "Vanilla", "Backwards", "Prediction"};
     private static final String[] MOVE_FIX_MODES = {"None", "Silent"};
 
@@ -167,21 +172,21 @@ public class Scaffold extends Module {
     @Override
     public void guiUpdate() {
         int modeValue = (int) mode.getInput();
-        rotationMode.setVisible(modeValue != 3, this);
-        jumpDelay.setVisible(modeValue == 1, this);
-        startRotateSpeed.setVisible(modeValue == 1, this);
-        normalRotateSpeed.setVisible(modeValue == 1, this);
-        edgeThreshold.setVisible(modeValue == 2, this);
-        ticksLimit.setVisible(modeValue == 2, this);
-        limitTicks.setVisible(modeValue == 2 && ticksLimit.isToggled(), this);
-        forwardSpeed.setVisible(modeValue == 2, this);
-        backSpeed.setVisible(modeValue == 2, this);
-        snapRotation.setVisible(modeValue == 2, this);
-        speedLimit.setVisible(modeValue == 1, this);
-        speedLimitTicks.setVisible(modeValue == 1 && speedLimit.isToggled(), this);
-        forwardRotationTicks.setVisible(modeValue == 1 && speedLimit.isToggled(), this);
-        legitSneakDelay.setVisible(modeValue == 3, this);
-        legitPlaceDuration.setVisible(modeValue == 3, this);
+        rotationMode.setVisible(modeValue != MODE_LEGIT, this);
+        jumpDelay.setVisible(isTellyFamily(modeValue), this);
+        startRotateSpeed.setVisible(isTellyFamily(modeValue), this);
+        normalRotateSpeed.setVisible(isTellyFamily(modeValue), this);
+        edgeThreshold.setVisible(modeValue == MODE_SNAP, this);
+        ticksLimit.setVisible(modeValue == MODE_SNAP, this);
+        limitTicks.setVisible(modeValue == MODE_SNAP && ticksLimit.isToggled(), this);
+        forwardSpeed.setVisible(modeValue == MODE_SNAP, this);
+        backSpeed.setVisible(modeValue == MODE_SNAP, this);
+        snapRotation.setVisible(modeValue == MODE_SNAP, this);
+        speedLimit.setVisible(isTellyFamily(modeValue), this);
+        speedLimitTicks.setVisible(isTellyFamily(modeValue) && speedLimit.isToggled(), this);
+        forwardRotationTicks.setVisible(isTellyFamily(modeValue) && speedLimit.isToggled(), this);
+        legitSneakDelay.setVisible(modeValue == MODE_LEGIT, this);
+        legitPlaceDuration.setVisible(modeValue == MODE_LEGIT, this);
         onlyInVoid.setVisible(clutch.isToggled(), this);
     }
 
@@ -212,7 +217,7 @@ public class Scaffold extends Module {
         legitWasOnEdge = false;
         // Leader's Telly keeps these fields across enable cycles. Its disable path
         // already resets Clutch, but stage/startY are intentionally not reinitialised.
-        if ((int) mode.getInput() != 1) {
+        if (!isTellyFamily()) {
             stage = 0;
             startY = MathHelper.floor_double(mc.thePlayer.posY);
             clutchActive = false;
@@ -242,7 +247,7 @@ public class Scaffold extends Module {
      */
     public boolean isUsingOwnMovementFix() {
         return isEnabled() && (int) moveFix.getInput() == 1
-                && ((int) mode.getInput() == 1 ? tellyRotationActive : canRotate)
+                && (isTellyFamily() ? tellyRotationActive : canRotate)
                 && (int) rotationMode.getInput() != 0;
     }
 
@@ -250,7 +255,7 @@ public class Scaffold extends Module {
     public void onClientRotation(ClientRotationEvent event) {
         tellyRotationWritten = false;
         tellyRotationActive = false;
-        if (!Utils.nullCheck() || mc.currentScreen != null && (int) mode.getInput() != 1) return;
+        if (!Utils.nullCheck() || mc.currentScreen != null && !isTellyFamily()) return;
         float eventYaw = event.yaw == null ? RotationUtils.serverRotations[0] : event.yaw;
         float eventPitch = event.pitch == null ? RotationUtils.serverRotations[1] : event.pitch;
         updateState();
@@ -261,9 +266,9 @@ public class Scaffold extends Module {
 
         BlockData blockData = getBlockData();
         Vec3 hitVec = null;
-        if ((int) mode.getInput() == 2 && snapForward) blockData = null;
+        if ((int) mode.getInput() == MODE_SNAP && snapForward) blockData = null;
         if (blockData != null) {
-            Aim aim = (int) mode.getInput() == 1
+            Aim aim = isTellyFamily()
                     ? findTellyAim(blockData, eventYaw, eventPitch)
                     : findAim(blockData, eventYaw, eventPitch, (int) rotationMode.getInput() == 3);
             if (aim != null) {
@@ -274,7 +279,7 @@ public class Scaffold extends Module {
             }
         }
 
-        if ((int) mode.getInput() == 1 && canRotate && isMoving()) {
+        if (isTellyFamily() && canRotate && isMoving()) {
             float movementYaw = getMovementYaw();
             float backwardsYaw = eventYaw
                     + MathHelper.wrapAngleTo180_float(movementYaw - 180.0F - eventYaw);
@@ -287,7 +292,7 @@ public class Scaffold extends Module {
         float outputYaw = yaw;
         float outputPitch = pitch;
         int modeValue = (int) mode.getInput();
-        if (modeValue == 1 && (int) rotationMode.getInput() != 0) {
+        if (isTellyFamily(modeValue) && (int) rotationMode.getInput() != 0) {
             float[] tellyRotation = getTellyRotation(eventYaw, eventPitch);
             outputYaw = tellyRotation[0];
             outputPitch = tellyRotation[1];
@@ -297,9 +302,9 @@ public class Scaffold extends Module {
             tellyWrittenYaw = outputYaw;
             tellyWrittenPitch = outputPitch;
             tellyRotationWritten = true;
-        } else if (canRotate && modeValue != 3 && (int) rotationMode.getInput() != 0) {
+        } else if (canRotate && modeValue != MODE_LEGIT && (int) rotationMode.getInput() != 0) {
             float speed = 180.0F;
-            if (modeValue == 2) speed = snapForward ? (float) forwardSpeed.getInput() : (float) backSpeed.getInput();
+            if (modeValue == MODE_SNAP) speed = snapForward ? (float) forwardSpeed.getInput() : (float) backSpeed.getInput();
             if (Math.abs(MathHelper.wrapAngleTo180_float(outputYaw - eventYaw)) > speed) {
                 rotationTick = Math.max(rotationTick, 1);
             }
@@ -308,7 +313,7 @@ public class Scaffold extends Module {
             event.yaw = outputYaw;
             event.pitch = outputPitch;
             movementFixYaw = outputYaw;
-        } else if (canRotate && modeValue == 3) {
+        } else if (canRotate && modeValue == MODE_LEGIT) {
             event.yaw = outputYaw;
             event.pitch = outputPitch;
             movementFixYaw = outputYaw;
@@ -340,7 +345,7 @@ public class Scaffold extends Module {
 
     @SubscribeEvent(priority = EventPriority.HIGH)
     public void onPreMotion(PreMotionEvent event) {
-        if ((int) mode.getInput() != 1 && shouldStopSprint()) event.setSprinting(false);
+        if (!isTellyFamily() && shouldStopSprint()) event.setSprinting(false);
     }
 
     @SubscribeEvent(priority = EventPriority.HIGHEST)
@@ -352,11 +357,13 @@ public class Scaffold extends Module {
             event.setSneak(false);
             return;
         }
-        if ((int) mode.getInput() == 1 && mc.thePlayer.onGround && stage > 0
+        if (isKeepYMode() && mc.thePlayer.onGround && tellyJumpDelayTimer > 0) {
+            event.setJump(false);
+        } else if (isTellyFamily() && mc.thePlayer.onGround && stage > 0
                 && isMoving() && tellyJumpDelayTimer <= 0) {
             event.setJump(true);
         }
-        if ((int) mode.getInput() == 3 && mc.currentScreen == null && mc.thePlayer.onGround
+        if ((int) mode.getInput() == MODE_LEGIT && mc.currentScreen == null && mc.thePlayer.onGround
                 && (legitEdgeState == 1 || legitEdgeState == 2)) {
             event.setSneak(true);
             event.setSneakSlowDownMultiplier(0.3D);
@@ -366,7 +373,7 @@ public class Scaffold extends Module {
     @SubscribeEvent(priority = EventPriority.LOWEST)
     public void onPostInput(PostPlayerInputEvent event) {
         if ((int) moveFix.getInput() != 1
-                || ((int) mode.getInput() == 1 ? !tellyRotationActive : !canRotate)
+                || (isTellyFamily() ? !tellyRotationActive : !canRotate)
                 || (int) rotationMode.getInput() == 0 || !isMoving()) return;
         fixMovement(movementFixYaw);
     }
@@ -377,7 +384,7 @@ public class Scaffold extends Module {
             event.setForward(0.0F);
             event.setStrafe(0.0F);
         } else if ((int) moveFix.getInput() == 1
-                && ((int) mode.getInput() == 1 ? tellyRotationActive : canRotate)
+                && (isTellyFamily() ? tellyRotationActive : canRotate)
                 && (int) rotationMode.getInput() != 0) {
             event.setYaw(movementFixYaw);
         }
@@ -386,23 +393,20 @@ public class Scaffold extends Module {
     @SubscribeEvent(priority = EventPriority.HIGHEST)
     public void onJump(JumpEvent event) {
         if ((int) moveFix.getInput() == 1
-                && ((int) mode.getInput() == 1 ? tellyRotationActive : canRotate)
+                && (isTellyFamily() ? tellyRotationActive : canRotate)
                 && (int) rotationMode.getInput() != 0) {
             event.setYaw(movementFixYaw);
         }
-        if ((int) mode.getInput() == 1 && isMoving()) {
-            // Movement correction can turn forward input into strafe input and make
-            // vanilla cancel sprint. Preserve its corrected yaw and only restore
-            // the sprint state and sprint-jump impulse.
+        if (isTellyMode() && isMoving()) {
             event.setSprint(true);
             mc.thePlayer.setSprinting(true);
         }
-        if ((int) mode.getInput() != 1 && shouldStopSprint()) event.setSprint(false);
+        if (!isTellyFamily() && shouldStopSprint()) event.setSprint(false);
     }
 
     @SubscribeEvent
     public void onPlayerMovement(PrePlayerMovementInputEvent event) {
-        if ((int) mode.getInput() != 1 && shouldStopSprint()) mc.thePlayer.setSprinting(false);
+        if (!isTellyFamily() && shouldStopSprint()) mc.thePlayer.setSprinting(false);
     }
 
     @SubscribeEvent(priority = EventPriority.HIGHEST)
@@ -490,9 +494,9 @@ public class Scaffold extends Module {
             shouldKeepY = false;
             towering = false;
             if (wasInAir) {
-                tellyJumpDelayTimer = (int) mode.getInput() == 1
+                tellyJumpDelayTimer = isTellyFamily()
                         ? (jumpDelayOverride >= 0 ? jumpDelayOverride : (int) jumpDelay.getInput()) : 0;
-                tellyFacingPlayer = (int) mode.getInput() == 1;
+                tellyFacingPlayer = isTellyMode();
                 tellyLandedThisTick = tellyFacingPlayer;
                 wasInAir = false;
             }
@@ -506,17 +510,17 @@ public class Scaffold extends Module {
             tellyFacingPlayer = false;
             wasInAir = true;
         }
-        if ((int) mode.getInput() == 1 && mc.thePlayer.onGround && isMoving()
+        if (isTellyFamily() && mc.thePlayer.onGround && isMoving()
                 && !mc.gameSettings.keyBindJump.isKeyDown() && stage == 0) stage = 1;
-        jumpDelayOverride = (int) mode.getInput() == 1 && mc.gameSettings.keyBindJump.isKeyDown() ? 2 : -1;
+        jumpDelayOverride = isTellyFamily() && mc.gameSettings.keyBindJump.isKeyDown() ? 2 : -1;
         updateClutch();
     }
 
     private void updateModeState(float eventYaw, float eventPitch) {
         int modeValue = (int) mode.getInput();
-        if (modeValue == 2) updateSnap();
-        if (modeValue == 3) updateLegit(eventYaw);
-        if (modeValue == 2) {
+        if (modeValue == MODE_SNAP) updateSnap();
+        if (modeValue == MODE_LEGIT) updateLegit(eventYaw);
+        if (modeValue == MODE_SNAP) {
             if (snapForward) {
                 yaw = quantizeAngle(getMovementYaw(), eventYaw);
                 pitch = quantizePitch(80.0F, eventPitch);
@@ -532,10 +536,13 @@ public class Scaffold extends Module {
     private float[] getTellyRotation(float eventYaw, float eventPitch) {
         float targetYaw = yaw;
         float targetPitch = pitch;
-        boolean startingJump = !tellyLandedThisTick && isTowering()
+        boolean normalRotationWhileJumpHeld = isKeepYMode()
+                && mc.gameSettings.keyBindJump.isKeyDown();
+        boolean startingJump = isTellyMode() && !tellyLandedThisTick && isTowering()
                 && tellyJumpDelayTimer <= 0 && forwardRotateTicksLeft <= 0;
 
-        if (tellyFacingPlayer && !startingJump) {
+        if (isTellyMode() ? tellyFacingPlayer && !startingJump
+                : mc.thePlayer.onGround && tellyJumpDelayTimer > 0 && !normalRotationWhileJumpHeld) {
             targetYaw = tellyQuantize(eventYaw
                     + MathHelper.wrapAngleTo180_float(mc.thePlayer.rotationYaw - eventYaw));
             targetPitch = tellyQuantize(mc.thePlayer.rotationPitch);
@@ -557,8 +564,11 @@ public class Scaffold extends Module {
             }
         }
 
-        if (startingJump) {
-            tellyFacingPlayer = false;
+        boolean beginTowerRotation = isTellyMode() ? startingJump
+                : !normalRotationWhileJumpHeld && isTowering()
+                && tellyJumpDelayTimer <= 0 && forwardRotateTicksLeft <= 0;
+        if (beginTowerRotation) {
+            if (isTellyMode()) tellyFacingPlayer = false;
             if (!speedLimit.isToggled()) {
                 float yawDelta = MathHelper.wrapAngleTo180_float(yaw - eventYaw);
                 targetYaw = tellyQuantize(eventYaw + MathHelper.clamp_float(yawDelta, -45.0F, 45.0F));
@@ -592,7 +602,7 @@ public class Scaffold extends Module {
     }
 
     private void initializeTellyRotation(float eventYaw, float eventPitch) {
-        if ((int) mode.getInput() != 1 || canRotate) return;
+        if (!isTellyFamily() || canRotate) return;
         boolean initialRotation = yaw == -180.0F && pitch == 0.0F;
         float movementYaw = getMovementYaw();
         float backwardsYaw = eventYaw + MathHelper.wrapAngleTo180_float(movementYaw - 180.0F - eventYaw);
@@ -669,7 +679,7 @@ public class Scaffold extends Module {
     }
 
     private boolean legitCanPlace() {
-        return (int) mode.getInput() != 3 || !mc.thePlayer.onGround || legitEdgeState == 0 || legitEdgeState == 2;
+        return (int) mode.getInput() != MODE_LEGIT || !mc.thePlayer.onGround || legitEdgeState == 0 || legitEdgeState == 2;
     }
 
     private BlockData getBlockData() {
@@ -698,7 +708,7 @@ public class Scaffold extends Module {
             }
         }
         if (supports.isEmpty()) return null;
-        if ((int) mode.getInput() == 1) {
+        if (isTellyFamily()) {
             supports.sort(Comparator.comparingDouble(pos -> pos.distanceSqToCenter(
                     target.getX() + 0.5D, target.getY() + 0.5D, target.getZ() + 0.5D)));
         } else {
@@ -715,10 +725,10 @@ public class Scaffold extends Module {
         double bestDistance = Double.MAX_VALUE;
         for (EnumFacing facing : EnumFacing.VALUES) {
             if (facing == EnumFacing.DOWN
-                    || (int) mode.getInput() != 1 && !isReplaceableForScaffold(support.offset(facing))) continue;
+                    || !isTellyFamily() && !isReplaceableForScaffold(support.offset(facing))) continue;
             BlockPos placed = support.offset(facing);
             if (placed.getY() > target.getY()) continue;
-            double distance = (int) mode.getInput() == 1
+            double distance = isTellyFamily()
                     ? placed.distanceSqToCenter(target.getX() + 0.5D, target.getY() + 0.5D, target.getZ() + 0.5D)
                     : placed.distanceSq(target.getX(), target.getY(), target.getZ());
             if (best == null || distance < bestDistance || distance == bestDistance && facing == EnumFacing.UP) {
@@ -836,7 +846,7 @@ public class Scaffold extends Module {
     private void place(BlockData data, Vec3 hitVec) {
         ItemStack stack = mc.thePlayer.getHeldItem();
         if (!isUsableBlock(stack) || blockCount <= 0
-                || (int) mode.getInput() != 1 && !BlockUtils.replaceable(data.pos.offset(data.facing))) return;
+                || !isTellyFamily() && !BlockUtils.replaceable(data.pos.offset(data.facing))) return;
         if (mc.playerController.onPlayerRightClick(mc.thePlayer, mc.theWorld, stack, data.pos, data.facing, hitVec)) {
             if (!mc.thePlayer.capabilities.isCreativeMode) blockCount--;
             if (swing.isToggled()) mc.thePlayer.swingItem();
@@ -846,7 +856,7 @@ public class Scaffold extends Module {
 
     private void selectBlock() {
         ItemStack current = mc.thePlayer.getHeldItem();
-        if ((int) mode.getInput() == 1) {
+        if (isTellyFamily()) {
             int heldCount = isUsableBlock(current) ? current.stackSize : 0;
             blockCount = Math.min(blockCount, heldCount);
         } else {
@@ -855,7 +865,7 @@ public class Scaffold extends Module {
         }
         if (blockCount > 0) return;
         int currentSlot = mc.thePlayer.inventory.currentItem;
-        if ((int) mode.getInput() == 1 && blockCount == 0) currentSlot--;
+        if (isTellyFamily() && blockCount == 0) currentSlot--;
         for (int i = currentSlot; i > currentSlot - 9; i--) {
             int slot = (i % 9 + 9) % 9;
             ItemStack candidate = mc.thePlayer.inventory.getStackInSlot(slot);
@@ -930,7 +940,7 @@ public class Scaffold extends Module {
     private boolean isFallingIntoVoid() {
         int x = MathHelper.floor_double(mc.thePlayer.posX);
         int z = MathHelper.floor_double(mc.thePlayer.posZ);
-        if ((int) mode.getInput() == 1) {
+        if (isTellyFamily()) {
             int playerY = MathHelper.floor_double(mc.thePlayer.posY);
             for (int i = 0; i <= 128; i++) {
                 if (BlockUtils.getBlock(new BlockPos(x, playerY - i, z)).getMaterial().isSolid()) return false;
@@ -1035,8 +1045,24 @@ public class Scaffold extends Module {
         return MathHelper.clamp_float(base + Math.round((target - base) / gcd) * gcd, -90.0F, 90.0F);
     }
 
+    private boolean isKeepYMode() {
+        return (int) mode.getInput() == MODE_KEEP_Y;
+    }
+
+    private boolean isTellyMode() {
+        return (int) mode.getInput() == MODE_TELLY;
+    }
+
+    private boolean isTellyFamily() {
+        return isTellyFamily((int) mode.getInput());
+    }
+
+    private boolean isTellyFamily(int modeValue) {
+        return modeValue == MODE_TELLY || modeValue == MODE_KEEP_Y;
+    }
+
     private boolean shouldStopSprint() {
-        return !isTowering() && stage <= 0 && (int) mode.getInput() != 2;
+        return !isTowering() && stage <= 0 && (int) mode.getInput() != MODE_SNAP;
     }
 
     private boolean isTowering() {
@@ -1068,20 +1094,20 @@ public class Scaffold extends Module {
     private boolean isUsableBlock(ItemStack stack) {
         if (stack == null || stack.stackSize < 1 || !(stack.getItem() instanceof ItemBlock)) return false;
         ItemBlock itemBlock = (ItemBlock) stack.getItem();
-        return (int) mode.getInput() == 1
+        return isTellyFamily()
                 ? isLeaderSolid(itemBlock.getBlock()) && !isLeaderInteractable(itemBlock.getBlock())
                 : Utils.canBePlaced(itemBlock);
     }
 
     private boolean isReplaceableForScaffold(BlockPos pos) {
-        if ((int) mode.getInput() != 1) return BlockUtils.replaceable(pos);
+        if (!isTellyFamily()) return BlockUtils.replaceable(pos);
         Block block = BlockUtils.getBlock(pos);
         if (!block.getMaterial().isReplaceable()) return false;
         return !(block instanceof BlockSnow) || block.getBlockBoundsMaxY() <= 0.125D;
     }
 
     private boolean isInteractableForScaffold(Block block) {
-        return (int) mode.getInput() == 1 ? isLeaderInteractable(block) : BlockUtils.isInteractable(block);
+        return isTellyFamily() ? isLeaderInteractable(block) : BlockUtils.isInteractable(block);
     }
 
     private boolean isLeaderInteractable(Block block) {

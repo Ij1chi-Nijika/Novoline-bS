@@ -2,6 +2,8 @@ package keystrokesmod.module;
 
 import keystrokesmod.Raven;
 import keystrokesmod.helper.MouseHelper;
+import keystrokesmod.module.impl.render.NotificationManager;
+import keystrokesmod.module.impl.render.ToggleSoundManager;
 import keystrokesmod.module.setting.Setting;
 import keystrokesmod.module.setting.impl.ButtonSetting;
 import keystrokesmod.module.setting.impl.SliderSetting;
@@ -142,6 +144,9 @@ public class Module {
             }
             this.onEnable();
         }
+
+        NotificationManager.moduleState(this, true);
+        ToggleSoundManager.moduleState(this, true);
     }
 
     public void disable() {
@@ -159,6 +164,9 @@ public class Module {
             }
             this.onDisable();
         }
+
+        NotificationManager.moduleState(this, false);
+        ToggleSoundManager.moduleState(this, false);
     }
 
     public String getInfo() {

@@ -88,6 +88,7 @@ public class ModuleManager {
     public static Relationships relationships;
     public static HideWindow hideWindow;
     public static Displace displace;
+    public static Disabler disabler;
 
     public void register() {
         this.addModule(chatCommands = new ChatCommands());
@@ -156,6 +157,7 @@ public class ModuleManager {
 
         this.addModule(new Anticheat());
         this.addModule(new ChatBypass());
+        this.addModule(disabler = new Disabler());
         this.addModule(new FakeChat());
         this.addModule(new LatencyAlerts());
         this.addModule(nameHider = new NameHider());

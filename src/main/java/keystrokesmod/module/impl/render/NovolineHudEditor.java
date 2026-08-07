@@ -7,7 +7,7 @@ import org.lwjgl.input.Keyboard;
 
 import java.io.IOException;
 
-/** Drag handles for the three independently positioned Novoline HUD panels. */
+/** Drag handles for the independently positioned Novoline HUD panels. */
 public final class NovolineHudEditor extends GuiScreen {
     private Element dragged;
     private int lastMouseX;
@@ -17,11 +17,14 @@ public final class NovolineHudEditor extends GuiScreen {
     public void drawScreen(int mouseX, int mouseY, float partialTicks) {
         drawRect(0, 0, width, height, 0xA0000000);
         NovolineHudRenderer.drawEditorPreview();
+        NotificationManager.drawEditorPreview();
         drawHandle("MODULE LIST", HUD.posX, HUD.posY, 120, 44, Element.MODULES);
         drawHandle("INVENTORY", (float) HUD.novolineInventoryX.getInput(), (float) HUD.novolineInventoryY.getInput(),
                 NovolineHudRenderer.getInventoryWidth(), NovolineHudRenderer.getInventoryHeight(), Element.INVENTORY);
         drawHandle("TARGETS", (float) HUD.novolineTargetsX.getInput(), (float) HUD.novolineTargetsY.getInput() - 13,
                 NovolineHudRenderer.getTargetsWidth(), NovolineHudRenderer.getTargetsHeight() + 13, Element.TARGETS);
+        drawHandle("NOTIFICATION", NotificationManager.getEditorX(), NotificationManager.getEditorY(),
+                NotificationManager.getEditorWidth(), NotificationManager.getEditorHeight(), Element.NOTIFICATION);
         NovolineFonts.bold(18).drawString("NOVOLINE HUD EDITOR", 12, 12, 0xFFFFFFFF, true);
         NovolineFonts.thin(16).drawString("Drag a highlighted panel. ESC closes the editor.", 12, 31, 0xFFB9BBBE, false);
     }
@@ -52,6 +55,11 @@ public final class NovolineHudEditor extends GuiScreen {
             case TARGETS:
                 HUD.novolineTargetsX.setValue(HUD.novolineTargetsX.getInput() + deltaX);
                 HUD.novolineTargetsY.setValue(HUD.novolineTargetsY.getInput() + deltaY);
+                break;
+            case NOTIFICATION:
+                // Stored as right/bottom offsets so the chosen anchor survives resolution changes.
+                HUD.novolineNotificationsX.setValue(HUD.novolineNotificationsX.getInput() - deltaX);
+                HUD.novolineNotificationsY.setValue(HUD.novolineNotificationsY.getInput() - deltaY);
                 break;
             default:
                 break;
@@ -92,6 +100,8 @@ public final class NovolineHudEditor extends GuiScreen {
                 NovolineHudRenderer.getInventoryWidth(), NovolineHudRenderer.getInventoryHeight())) return Element.INVENTORY;
         if (contains(mouseX, mouseY, HUD.novolineTargetsX.getInput(), HUD.novolineTargetsY.getInput() - 13,
                 NovolineHudRenderer.getTargetsWidth(), NovolineHudRenderer.getTargetsHeight() + 13)) return Element.TARGETS;
+        if (contains(mouseX, mouseY, NotificationManager.getEditorX(), NotificationManager.getEditorY(),
+                NotificationManager.getEditorWidth(), NotificationManager.getEditorHeight())) return Element.NOTIFICATION;
         return null;
     }
 
@@ -99,5 +109,5 @@ public final class NovolineHudEditor extends GuiScreen {
         return mouseX >= x - 2 && mouseX <= x + width + 2 && mouseY >= y - 2 && mouseY <= y + height + 2;
     }
 
-    private enum Element { MODULES, INVENTORY, TARGETS }
+    private enum Element { MODULES, INVENTORY, TARGETS, NOTIFICATION }
 }

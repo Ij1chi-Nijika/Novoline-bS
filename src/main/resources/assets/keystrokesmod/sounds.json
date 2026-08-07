@@ -1,0 +1,14 @@
+{
+  "novoline.toggle_on": {
+    "category": "master",
+    "sounds": [
+      "novoline/sound_buttons_hanabi2_on"
+    ]
+  },
+  "novoline.toggle_off": {
+    "category": "master",
+    "sounds": [
+      "novoline/sound_buttons_hanabi2_off"
+    ]
+  }
+}
