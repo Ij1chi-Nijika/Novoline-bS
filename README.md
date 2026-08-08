@@ -15,7 +15,7 @@ Raven Bs was created with a strong foundation built on user privacy and the comm
 
 ## Installation
 
-- Download the latest jar from the [Releases](https://github.com/Ij1chi-Nijika/Novoline-bS/releases/download/%23073126-build/Novoline-bS.jar) page.
+- Download the latest jar from the [Releases](https://github.com/Ij1chi-Nijika/Novoline-bS/releases/download/%23080826-hotfix/Novoline-bS.jar) page.
 - Ensure Forge for Minecraft 1.8.9 is installed.
 - Drag the jar file into your mods folder.
 - Launch the game!
