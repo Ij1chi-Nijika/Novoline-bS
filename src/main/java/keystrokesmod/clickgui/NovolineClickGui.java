@@ -94,9 +94,10 @@ public final class NovolineClickGui extends ClickGui {
 
     @Override
     public void mouseClicked(int mouseX, int mouseY, int mouseButton) throws IOException {
-        float scale = renderScale(new ScaledResolution(mc));
-        mouseX = (int) (mouseX / scale);
-        mouseY = (int) (mouseY / scale);
+        // GuiScreen.handleMouseInput already converts the raw display coordinates
+        // using this screen's logical width and height.  Applying renderScale here
+        // a second time offsets hitboxes whenever Minecraft's GuiScale differs
+        // from the ClickGUI's internal scale.
         if (isDiscord()) {
             clickDiscord(mouseX, mouseY, mouseButton);
         }
@@ -125,9 +126,10 @@ public final class NovolineClickGui extends ClickGui {
             return;
         }
 
-        float scale = renderScale(new ScaledResolution(mc));
-        int mouseX = (int) ((Mouse.getEventX() * width / mc.displayWidth) / scale);
-        int mouseY = (int) ((height - Mouse.getEventY() * height / mc.displayHeight - 1) / scale);
+        // Match GuiScreen.handleMouseInput: width/height are already the ClickGUI
+        // logical dimensions, so these coordinates must not be scaled again.
+        int mouseX = Mouse.getEventX() * width / mc.displayWidth;
+        int mouseY = height - Mouse.getEventY() * height / mc.displayHeight - 1;
         Panel panel = scrollTarget(mouseX, mouseY);
         if (panel != null && panel.open && panel.maxScroll > 0.0f) {
             float step = Math.max(12.0f, Gui.scrollSpeed == null ? 20.0f : (float) Gui.scrollSpeed.getInput());
