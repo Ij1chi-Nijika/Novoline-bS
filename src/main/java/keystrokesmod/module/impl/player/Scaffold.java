@@ -133,6 +133,7 @@ public class Scaffold extends Module {
     private int forwardRotateTicksLeft;
     private boolean tellyFacingPlayer;
     private boolean tellyLandedThisTick;
+    private boolean restoreGroundSprintAfterMoveFix;
     private int legitEdgeState;
     private int legitEdgeTimer;
     private boolean legitWasOnEdge;
@@ -212,6 +213,7 @@ public class Scaffold extends Module {
         forwardRotateTicksLeft = 0;
         tellyFacingPlayer = false;
         tellyLandedThisTick = false;
+        restoreGroundSprintAfterMoveFix = false;
         legitEdgeState = 0;
         legitEdgeTimer = 0;
         legitWasOnEdge = false;
@@ -372,9 +374,22 @@ public class Scaffold extends Module {
 
     @SubscribeEvent(priority = EventPriority.LOWEST)
     public void onPostInput(PostPlayerInputEvent event) {
+        restoreGroundSprintAfterMoveFix = false;
         if ((int) moveFix.getInput() != 1
                 || (isTellyFamily() ? !tellyRotationActive : !canRotate)
                 || (int) rotationMode.getInput() == 0 || !isMoving()) return;
+
+        // Silent correction can map W+A/W+D to a server-relative strafe or
+        // backwards input. Vanilla then sees moveForward < 0.8 and drops sprint
+        // for the landing tick, producing a visible sideways jerk/slowdown.
+        // Remember the pre-correction sprint state and restore it immediately
+        // before movement is applied; do not grant sprint if it was not active.
+        boolean forwardHeld = mc.gameSettings.keyBindForward.isKeyDown()
+                && !mc.gameSettings.keyBindBack.isKeyDown();
+        boolean wasSprinting = mc.thePlayer.isSprinting()
+                || mc.gameSettings.keyBindSprint.isKeyDown();
+        restoreGroundSprintAfterMoveFix = isTellyFamily() && mc.thePlayer.onGround
+                && forwardHeld && wasSprinting;
         fixMovement(movementFixYaw);
     }
 
@@ -397,7 +412,8 @@ public class Scaffold extends Module {
                 && (int) rotationMode.getInput() != 0) {
             event.setYaw(movementFixYaw);
         }
-        if (isTellyMode() && isMoving()) {
+        if ((isTellyMode() && isMoving())
+                || (isKeepYMode() && restoreGroundSprintAfterMoveFix)) {
             event.setSprint(true);
             mc.thePlayer.setSprinting(true);
         }
@@ -406,7 +422,16 @@ public class Scaffold extends Module {
 
     @SubscribeEvent
     public void onPlayerMovement(PrePlayerMovementInputEvent event) {
-        if (!isTellyFamily() && shouldStopSprint()) mc.thePlayer.setSprinting(false);
+        if (isTellyFamily()) {
+            if (restoreGroundSprintAfterMoveFix
+                    && mc.gameSettings.keyBindForward.isKeyDown()
+                    && !mc.gameSettings.keyBindBack.isKeyDown()) {
+                mc.thePlayer.setSprinting(true);
+            }
+            restoreGroundSprintAfterMoveFix = false;
+        } else if (shouldStopSprint()) {
+            mc.thePlayer.setSprinting(false);
+        }
     }
 
     @SubscribeEvent(priority = EventPriority.HIGHEST)

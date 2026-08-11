@@ -103,6 +103,7 @@ public class ModuleManager {
         this.addModule(new AimAssist());
         this.addModule(new AutoRun());
         this.addModule(autoClicker = new AutoClicker());
+        this.addModule(new BackTrack());
         this.addModule(blockIn = new BlockIn());
         this.addModule(new ClickAssist());
         this.addModule(displace = new Displace());

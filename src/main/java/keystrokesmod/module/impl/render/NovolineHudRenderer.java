@@ -23,7 +23,6 @@ import java.util.Comparator;
 import java.util.Date;
 import java.util.List;
 
-/** Novoline's 1.8 HUD layout, backed by Raven's modules and profile settings. */
 final class NovolineHudRenderer {
     private static final Minecraft MC = Minecraft.getMinecraft();
     private static final SimpleDateFormat CLOCK = new SimpleDateFormat("HH:mm");
@@ -163,7 +162,7 @@ final class NovolineHudRenderer {
     }
 
     private static void drawUserInfo(ScaledResolution resolution) {
-        String info = EnumChatFormatting.GRAY + "Build - " + EnumChatFormatting.WHITE + "#080826"
+        String info = EnumChatFormatting.GRAY + "Build - " + EnumChatFormatting.WHITE + "#081126"
                 + EnumChatFormatting.GRAY + " | UID - " + EnumChatFormatting.WHITE + MC.thePlayer.getName();
         draw(info, resolution.getScaledWidth() - width(info) - 2, resolution.getScaledHeight() - height() - 2, 0xFFFFFFFF, true);
     }
