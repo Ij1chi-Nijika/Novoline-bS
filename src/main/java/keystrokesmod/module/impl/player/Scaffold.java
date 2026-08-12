@@ -566,8 +566,7 @@ public class Scaffold extends Module {
         boolean startingJump = isTellyMode() && !tellyLandedThisTick && isTowering()
                 && tellyJumpDelayTimer <= 0 && forwardRotateTicksLeft <= 0;
 
-        if (isTellyMode() ? tellyFacingPlayer && !startingJump
-                : mc.thePlayer.onGround && tellyJumpDelayTimer > 0 && !normalRotationWhileJumpHeld) {
+        if (isTellyMode() && tellyFacingPlayer && !startingJump) {
             targetYaw = tellyQuantize(eventYaw
                     + MathHelper.wrapAngleTo180_float(mc.thePlayer.rotationYaw - eventYaw));
             targetPitch = tellyQuantize(mc.thePlayer.rotationPitch);

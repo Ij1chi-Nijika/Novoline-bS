@@ -37,7 +37,7 @@ public class Disabler extends Module {
     private static boolean c09Warned;
 
     public Disabler() {
-        super("Disabler", category.misc);
+        super("Disabler", category.exploits);
         this.registerSetting(mode = new SliderSetting("Mode", 0, MODES));
         this.registerSetting(inventory = new ButtonSetting("Inventory", false));
         this.registerSetting(c09 = new ButtonSetting("C09", false));

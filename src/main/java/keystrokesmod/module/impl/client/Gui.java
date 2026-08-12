@@ -24,7 +24,7 @@ public class Gui extends Module {
     public Gui() {
         super("Gui", category.configs, 54);
         this.registerSetting(guiScale = new SliderSetting("Gui scale", "x", 1.0, 0.5, 2.0, 0.01));
-        this.registerSetting(novolineDesign = new SliderSetting("Design", 0, new String[]{ "Dropdown", "Discord", "Material" }));
+        this.registerSetting(novolineDesign = new SliderSetting("Design", 0, new String[]{ "Dropdown", "Legacy", "Material" }));
         this.registerSetting(font = new SliderSetting("Font", FontManager.getDefaultEclipseFontOptionIndex(), GUI_FONT_OPTIONS));
         this.registerSetting(backgroundBlur = new SliderSetting("Background blur", "%", 0, 0, 100, 1));
         this.registerSetting(scrollSpeed = new SliderSetting("Scroll speed", 20, 2, 90, 1));
