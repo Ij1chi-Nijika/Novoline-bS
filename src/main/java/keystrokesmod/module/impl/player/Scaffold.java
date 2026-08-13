@@ -131,8 +131,6 @@ public class Scaffold extends Module {
     private int airTicks;
     private boolean pendingSpeedLimitRotation;
     private int forwardRotateTicksLeft;
-    private boolean tellyFacingPlayer;
-    private boolean tellyLandedThisTick;
     private boolean restoreGroundSprintAfterMoveFix;
     private int legitEdgeState;
     private int legitEdgeTimer;
@@ -211,8 +209,6 @@ public class Scaffold extends Module {
         airTicks = 0;
         pendingSpeedLimitRotation = false;
         forwardRotateTicksLeft = 0;
-        tellyFacingPlayer = false;
-        tellyLandedThisTick = false;
         restoreGroundSprintAfterMoveFix = false;
         legitEdgeState = 0;
         legitEdgeTimer = 0;
@@ -388,7 +384,7 @@ public class Scaffold extends Module {
                 && !mc.gameSettings.keyBindBack.isKeyDown();
         boolean wasSprinting = mc.thePlayer.isSprinting()
                 || mc.gameSettings.keyBindSprint.isKeyDown();
-        restoreGroundSprintAfterMoveFix = isTellyFamily() && mc.thePlayer.onGround
+        restoreGroundSprintAfterMoveFix = isKeepYMode() && mc.thePlayer.onGround
                 && forwardHeld && wasSprinting;
         fixMovement(movementFixYaw);
     }
@@ -412,8 +408,7 @@ public class Scaffold extends Module {
                 && (int) rotationMode.getInput() != 0) {
             event.setYaw(movementFixYaw);
         }
-        if ((isTellyMode() && isMoving())
-                || (isKeepYMode() && restoreGroundSprintAfterMoveFix)) {
+        if (isKeepYMode() && restoreGroundSprintAfterMoveFix) {
             event.setSprint(true);
             mc.thePlayer.setSprinting(true);
         }
@@ -422,14 +417,14 @@ public class Scaffold extends Module {
 
     @SubscribeEvent
     public void onPlayerMovement(PrePlayerMovementInputEvent event) {
-        if (isTellyFamily()) {
+        if (isKeepYMode()) {
             if (restoreGroundSprintAfterMoveFix
                     && mc.gameSettings.keyBindForward.isKeyDown()
                     && !mc.gameSettings.keyBindBack.isKeyDown()) {
                 mc.thePlayer.setSprinting(true);
             }
             restoreGroundSprintAfterMoveFix = false;
-        } else if (shouldStopSprint()) {
+        } else if (!isTellyFamily() && shouldStopSprint()) {
             mc.thePlayer.setSprinting(false);
         }
     }
@@ -509,7 +504,6 @@ public class Scaffold extends Module {
     }
 
     private void updateState() {
-        tellyLandedThisTick = false;
         if (rotationTick > 0) rotationTick--;
         if (forwardRotateTicksLeft > 0) forwardRotateTicksLeft--;
         if (mc.thePlayer.onGround) {
@@ -521,8 +515,6 @@ public class Scaffold extends Module {
             if (wasInAir) {
                 tellyJumpDelayTimer = isTellyFamily()
                         ? (jumpDelayOverride >= 0 ? jumpDelayOverride : (int) jumpDelay.getInput()) : 0;
-                tellyFacingPlayer = isTellyMode();
-                tellyLandedThisTick = tellyFacingPlayer;
                 wasInAir = false;
             }
             if (tellyJumpDelayTimer > 0) tellyJumpDelayTimer--;
@@ -532,7 +524,6 @@ public class Scaffold extends Module {
             }
         } else {
             if (speedLimit.isToggled()) airTicks++;
-            tellyFacingPlayer = false;
             wasInAir = true;
         }
         if (isTellyFamily() && mc.thePlayer.onGround && isMoving()
@@ -559,19 +550,12 @@ public class Scaffold extends Module {
     }
 
     private float[] getTellyRotation(float eventYaw, float eventPitch) {
+        if (isTellyMode()) return getLeaderTellyRotation(eventYaw, eventPitch);
+
         float targetYaw = yaw;
         float targetPitch = pitch;
         boolean normalRotationWhileJumpHeld = isKeepYMode()
                 && mc.gameSettings.keyBindJump.isKeyDown();
-        boolean startingJump = isTellyMode() && !tellyLandedThisTick && isTowering()
-                && tellyJumpDelayTimer <= 0 && forwardRotateTicksLeft <= 0;
-
-        if (isTellyMode() && tellyFacingPlayer && !startingJump) {
-            targetYaw = tellyQuantize(eventYaw
-                    + MathHelper.wrapAngleTo180_float(mc.thePlayer.rotationYaw - eventYaw));
-            targetPitch = tellyQuantize(mc.thePlayer.rotationPitch);
-            return new float[]{targetYaw, targetPitch};
-        }
 
         if (speedLimit.isToggled() && forwardRotateTicksLeft > 0) {
             float yawDelta = MathHelper.wrapAngleTo180_float(mc.thePlayer.rotationYaw - eventYaw);
@@ -588,14 +572,13 @@ public class Scaffold extends Module {
             }
         }
 
-        boolean beginTowerRotation = isTellyMode() ? startingJump
-                : !normalRotationWhileJumpHeld && isTowering()
+        boolean beginTowerRotation = !normalRotationWhileJumpHeld && isTowering()
                 && tellyJumpDelayTimer <= 0 && forwardRotateTicksLeft <= 0;
         if (beginTowerRotation) {
-            if (isTellyMode()) tellyFacingPlayer = false;
             if (!speedLimit.isToggled()) {
                 float yawDelta = MathHelper.wrapAngleTo180_float(yaw - eventYaw);
-                targetYaw = tellyQuantize(eventYaw + MathHelper.clamp_float(yawDelta, -45.0F, 45.0F));
+                targetYaw = tellyQuantize(eventYaw
+                        + MathHelper.clamp_float(yawDelta, -45.0F, 45.0F));
                 float pitchDelta = pitch - eventPitch;
                 targetPitch = tellyQuantize(eventPitch
                         + MathHelper.clamp_float(pitchDelta, -45.0F, 45.0F));
@@ -608,6 +591,59 @@ public class Scaffold extends Module {
         } else if (tellyJumpDelayTimer > 0) {
             targetYaw = yaw != -180.0F
                     ? yaw : tellyQuantize(MathHelper.wrapAngleTo180_float(mc.thePlayer.rotationYaw - eventYaw) + eventYaw);
+            targetPitch = Math.abs(pitch) > 10.0F ? pitch : 60.0F;
+        }
+
+        if (speedLimit.isToggled() && pendingSpeedLimitRotation && !mc.thePlayer.onGround
+                && airTicks >= (int) speedLimitTicks.getInput()) {
+            float yawDelta = MathHelper.wrapAngleTo180_float(mc.thePlayer.rotationYaw - eventYaw);
+            yaw = tellyQuantize(eventYaw + yawDelta * random(0.98F, 0.99F));
+            pitch = tellyQuantize(random(30.0F, 80.0F));
+            forwardRotateTicksLeft = (int) forwardRotationTicks.getInput();
+            rotationTick = 0;
+            towering = true;
+            pendingSpeedLimitRotation = false;
+            airTicks = 0;
+        }
+        return new float[]{targetYaw, targetPitch};
+    }
+
+    /** Direct port of Leader-Lite Scaffold's mode == Telly rotation state. */
+    private float[] getLeaderTellyRotation(float eventYaw, float eventPitch) {
+        float targetYaw = yaw;
+        float targetPitch = pitch;
+
+        if (speedLimit.isToggled() && forwardRotateTicksLeft > 0) {
+            float yawDelta = MathHelper.wrapAngleTo180_float(mc.thePlayer.rotationYaw - eventYaw);
+            yaw = tellyQuantize(eventYaw + yawDelta * random(0.98F, 0.99F));
+            pitch = tellyQuantize(random(30.0F, 80.0F));
+            rotationTick = 0;
+        } else if (towering && (mc.thePlayer.motionY > 0.0D || mc.thePlayer.posY > startY + 1.0D)) {
+            float yawDifference = MathHelper.wrapAngleTo180_float(yaw - eventYaw);
+            float tolerance = rotationTick >= 2
+                    ? (float) startRotateSpeed.getInput() : (float) normalRotateSpeed.getInput();
+            if (Math.abs(yawDifference) > tolerance) {
+                targetYaw = tellyQuantize(eventYaw
+                        + MathHelper.clamp_float(yawDifference, -tolerance, tolerance));
+                rotationTick = Math.max(rotationTick, 1);
+            }
+        }
+
+        if (isTowering() && tellyJumpDelayTimer <= 0 && forwardRotateTicksLeft <= 0) {
+            if (!speedLimit.isToggled()) {
+                float yawDelta = MathHelper.wrapAngleTo180_float(mc.thePlayer.rotationYaw - eventYaw);
+                targetYaw = tellyQuantize(eventYaw + yawDelta * random(0.98F, 0.99F));
+                targetPitch = tellyQuantize(random(30.0F, 80.0F));
+                rotationTick = 3;
+                towering = true;
+            } else {
+                pendingSpeedLimitRotation = true;
+                airTicks = 0;
+            }
+        } else if (tellyJumpDelayTimer > 0) {
+            targetYaw = yaw != -180.0F
+                    ? yaw : tellyQuantize(MathHelper.wrapAngleTo180_float(
+                    mc.thePlayer.rotationYaw - eventYaw) + eventYaw);
             targetPitch = Math.abs(pitch) > 10.0F ? pitch : 60.0F;
         }
 
@@ -1000,30 +1036,27 @@ public class Scaffold extends Module {
     }
 
     private void fixMovement(float rotationYaw) {
-        float forward = mc.thePlayer.movementInput.moveForward;
-        float strafe = mc.thePlayer.movementInput.moveStrafe;
-        if (forward == 0.0F && strafe == 0.0F) return;
-        double intended = direction(mc.thePlayer.rotationYaw, forward, strafe);
-        float bestForward = 0.0F;
-        float bestStrafe = 0.0F;
-        double bestDifference = Double.MAX_VALUE;
-        for (int f = -1; f <= 1; f++) for (int s = -1; s <= 1; s++) {
-            if (f == 0 && s == 0) continue;
-            double difference = Math.abs(MathHelper.wrapAngleTo180_double(intended - direction(rotationYaw, f, s)));
-            if (difference < bestDifference) {
-                bestDifference = difference;
-                bestForward = f;
-                bestStrafe = s;
-            }
+        float angle = MathHelper.wrapAngleTo180_float(getMovementYaw() - rotationYaw + 22.5F);
+        switch ((int) (angle + 180.0F) / 45 % 8) {
+            case 0: mc.thePlayer.movementInput.moveForward = -1.0F; mc.thePlayer.movementInput.moveStrafe = 0.0F; break;
+            case 1: mc.thePlayer.movementInput.moveForward = -1.0F; mc.thePlayer.movementInput.moveStrafe = 1.0F; break;
+            case 2: mc.thePlayer.movementInput.moveForward = 0.0F; mc.thePlayer.movementInput.moveStrafe = 1.0F; break;
+            case 3: mc.thePlayer.movementInput.moveForward = 1.0F; mc.thePlayer.movementInput.moveStrafe = 1.0F; break;
+            case 4: mc.thePlayer.movementInput.moveForward = 1.0F; mc.thePlayer.movementInput.moveStrafe = 0.0F; break;
+            case 5: mc.thePlayer.movementInput.moveForward = 1.0F; mc.thePlayer.movementInput.moveStrafe = -1.0F; break;
+            case 6: mc.thePlayer.movementInput.moveForward = 0.0F; mc.thePlayer.movementInput.moveStrafe = -1.0F; break;
+            case 7: mc.thePlayer.movementInput.moveForward = -1.0F; mc.thePlayer.movementInput.moveStrafe = -1.0F; break;
         }
-        mc.thePlayer.movementInput.moveForward = bestForward;
-        mc.thePlayer.movementInput.moveStrafe = bestStrafe;
+        if (mc.thePlayer.movementInput.sneak) {
+            mc.thePlayer.movementInput.moveForward *= 0.3F;
+            mc.thePlayer.movementInput.moveStrafe *= 0.3F;
+        }
     }
 
     private float getMovementYaw() {
         float forward = mc.gameSettings.keyBindForward.isKeyDown() ? 1.0F : mc.gameSettings.keyBindBack.isKeyDown() ? -1.0F : 0.0F;
         float strafe = mc.gameSettings.keyBindLeft.isKeyDown() ? 1.0F : mc.gameSettings.keyBindRight.isKeyDown() ? -1.0F : 0.0F;
-        return (float) direction(mc.thePlayer.rotationYaw, forward, strafe);
+        return MathHelper.wrapAngleTo180_float((float) direction(mc.thePlayer.rotationYaw, forward, strafe));
     }
 
     private double direction(float rotationYaw, float forward, float strafe) {
