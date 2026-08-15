@@ -213,8 +213,6 @@ public class Scaffold extends Module {
         legitEdgeState = 0;
         legitEdgeTimer = 0;
         legitWasOnEdge = false;
-        // Leader's Telly keeps these fields across enable cycles. Its disable path
-        // already resets Clutch, but stage/startY are intentionally not reinitialised.
         if (!isTellyFamily()) {
             stage = 0;
             startY = MathHelper.floor_double(mc.thePlayer.posY);
@@ -239,10 +237,6 @@ public class Scaffold extends Module {
         return lastSlot;
     }
 
-    /**
-     * Scaffold owns movement correction while its local Move fix is active.
-     * RotationHelper uses this to avoid applying a second correction pass.
-     */
     public boolean isUsingOwnMovementFix() {
         return isEnabled() && (int) moveFix.getInput() == 1
                 && (isTellyFamily() ? tellyRotationActive : canRotate)
@@ -375,11 +369,6 @@ public class Scaffold extends Module {
                 || (isTellyFamily() ? !tellyRotationActive : !canRotate)
                 || (int) rotationMode.getInput() == 0 || !isMoving()) return;
 
-        // Silent correction can map W+A/W+D to a server-relative strafe or
-        // backwards input. Vanilla then sees moveForward < 0.8 and drops sprint
-        // for the landing tick, producing a visible sideways jerk/slowdown.
-        // Remember the pre-correction sprint state and restore it immediately
-        // before movement is applied; do not grant sprint if it was not active.
         boolean forwardHeld = mc.gameSettings.keyBindForward.isKeyDown()
                 && !mc.gameSettings.keyBindBack.isKeyDown();
         boolean wasSprinting = mc.thePlayer.isSprinting()
