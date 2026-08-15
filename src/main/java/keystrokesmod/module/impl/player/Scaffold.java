@@ -597,7 +597,6 @@ public class Scaffold extends Module {
         return new float[]{targetYaw, targetPitch};
     }
 
-    /** Direct port of Leader-Lite Scaffold's mode == Telly rotation state. */
     private float[] getLeaderTellyRotation(float eventYaw, float eventPitch) {
         float targetYaw = yaw;
         float targetPitch = pitch;
