@@ -1,7 +1,7 @@
 <img width="1919" height="1079" alt="MEITU_20260731_192057126" src="https://github.com/user-attachments/assets/95215e8d-79d6-4060-88dd-1bf57626c32b" />
 
 <h1 align="center">Novoline bS</h1>
-<p align="center">A Privacy-First Minecraft 1.8.9 Forge Utility Mod Designed For Hypixel.</p>
+<p align="center">A Privacy-First Minecraft 1.8.9 Forge Utility Mod Designed For Hypixel</p>
 
 <div align="center">
     <a href="https://discord.gg/ZWttByQD5N"><img src="https://img.shields.io/discord/1228692408858837013?logo=discord&label=Discord" alt="Discord"/></a>
