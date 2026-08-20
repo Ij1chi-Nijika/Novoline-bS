@@ -4,7 +4,7 @@
 <p align="center">A Privacy-First Minecraft 1.8.9 Forge Utility Mod Designed For Hypixel</p>
 
 <div align="center">
-    <a href="https://discord.gg/ZWttByQD5N"><img src="https://img.shields.io/discord/1228692408858837013?logo=discord&label=Discord" alt="Discord"/></a>
+    <a href="https://discord.gg/G5gXkvWj2Q"><img src="https://img.shields.io/discord/1228692408858837013?logo=discord&label=Discord" alt="Discord"/></a>
 </div>
 
 ---
