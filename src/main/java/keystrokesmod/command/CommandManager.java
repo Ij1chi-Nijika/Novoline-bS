@@ -7,6 +7,7 @@ import keystrokesmod.command.impl.Debug;
 import keystrokesmod.command.impl.Enemy;
 import keystrokesmod.command.impl.Friend;
 import keystrokesmod.command.impl.HideAll;
+import keystrokesmod.command.impl.IRCCommand;
 import keystrokesmod.command.impl.Name;
 import keystrokesmod.command.impl.Ping;
 import keystrokesmod.command.impl.Prefix;
@@ -46,6 +47,7 @@ public class CommandManager {
         register(new Profiles());
         register(new ShowAll());
         register(new HideAll());
+        register(new IRCCommand());
     }
 
     public boolean handleChatMessage(String message) {

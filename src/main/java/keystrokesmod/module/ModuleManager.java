@@ -89,6 +89,7 @@ public class ModuleManager {
     public static HideWindow hideWindow;
     public static Displace displace;
     public static Disabler disabler;
+    public static IRC irc;
 
     public void register() {
         this.addModule(chatCommands = new ChatCommands());
@@ -161,6 +162,7 @@ public class ModuleManager {
         this.addModule(disabler = new Disabler());
         this.addModule(new FakeChat());
         this.addModule(new LatencyAlerts());
+        this.addModule(irc = new IRC());
         this.addModule(nameHider = new NameHider());
         this.addModule(new ViewPackets());
 

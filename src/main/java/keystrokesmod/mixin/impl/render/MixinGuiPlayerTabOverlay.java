@@ -1,6 +1,7 @@
 package keystrokesmod.mixin.impl.render;
 
 import keystrokesmod.module.ModuleManager;
+import keystrokesmod.module.impl.other.IRC;
 import keystrokesmod.module.impl.other.NameHider;
 import net.minecraft.client.gui.GuiPlayerTabOverlay;
 import net.minecraft.client.network.NetworkPlayerInfo;
@@ -15,11 +16,15 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 @Mixin(GuiPlayerTabOverlay.class)
 public class MixinGuiPlayerTabOverlay {
     @Inject(method = "getPlayerName", at = @At("RETURN"), cancellable = true)
-    private void nameHider$hideTabName(NetworkPlayerInfo networkPlayerInfoIn, CallbackInfoReturnable<String> cir) {
-        if (ModuleManager.nameHider == null || !ModuleManager.nameHider.isEnabled()) {
-            return;
+    private void raven$decorateTabName(NetworkPlayerInfo networkPlayerInfoIn, CallbackInfoReturnable<String> cir) {
+        String name = cir.getReturnValue();
+        if (ModuleManager.nameHider != null && ModuleManager.nameHider.isEnabled()) {
+            name = NameHider.getTabName(networkPlayerInfoIn, name);
         }
 
-        cir.setReturnValue(NameHider.getTabName(networkPlayerInfoIn, cir.getReturnValue()));
+        if (ModuleManager.irc != null && ModuleManager.irc.isEnabled()) {
+            name = IRC.getTabName(networkPlayerInfoIn, name);
+        }
+        cir.setReturnValue(name);
     }
 }
