@@ -9,6 +9,10 @@
 
 ---
 
+> [!WARNING]
+> 本客户端的绕过仅限于能玩，您尽可以选择其他客户端，我们鼓励您游玩其他更加优秀的客户端
+> 本客户端诞生的目的仅仅为了让朋友们知道一个客户端可以大粪到什么程度，如果您对本客户端的源码产生了生理性恶心，请立刻退出本仓库并出去散步放松心情，这有益于您的身体健康
+
 ## Information
 
 Raven Bs was created with a strong foundation built on user privacy and the commitment to provide anyone with access to a polished, high-quality utility mod. We believe that privacy should never be traded for using a client, which is why we've designed this mod from the ground up to respect your data and anonymity. We offer a clean, feature-rich experience without the bloat or invasive tracking found in other mods.
