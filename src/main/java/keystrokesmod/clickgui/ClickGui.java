@@ -7,24 +7,19 @@ import keystrokesmod.clickgui.components.impl.BindComponent;
 import keystrokesmod.clickgui.components.impl.CategoryComponent;
 import keystrokesmod.clickgui.components.impl.ModuleComponent;
 import keystrokesmod.module.Module;
-import keystrokesmod.module.impl.client.CommandLine;
 import keystrokesmod.module.impl.client.Gui;
-import keystrokesmod.utility.CommandHandler;
 import keystrokesmod.utility.Timer;
 import keystrokesmod.utility.Utils;
 import keystrokesmod.utility.shader.BlurUtils;
 import keystrokesmod.utility.shader.RoundedUtils;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiButton;
 import net.minecraft.client.gui.GuiScreen;
-import net.minecraft.client.gui.GuiTextField;
 import net.minecraft.client.gui.ScaledResolution;
 import net.minecraft.client.gui.inventory.GuiInventory;
 import net.minecraft.client.renderer.GlStateManager;
 import net.minecraft.util.MathHelper;
 import net.minecraftforge.client.event.GuiScreenEvent;
 import net.minecraftforge.common.MinecraftForge;
-import net.minecraftforge.fml.client.config.GuiButtonExt;
 import org.lwjgl.input.Keyboard;
 import org.lwjgl.input.Mouse;
 import org.lwjgl.opengl.GL11;
@@ -45,8 +40,6 @@ public class ClickGui extends GuiScreen {
     private Timer backgroundFade;
     private Timer blurSmooth;
     private ScaledResolution sr;
-    private GuiButtonExt commandLineSend;
-    private GuiTextField commandLineInput;
     public static ArrayList<CategoryComponent> categories;
     private int actualScreenWidth;
     private int actualScreenHeight;
@@ -101,9 +94,6 @@ public class ClickGui extends GuiScreen {
                 categoryComponent.reloadModules();
             }
         }
-        (this.commandLineInput = new GuiTextField(1, this.mc.fontRendererObj, 22, this.height - 100, 150, 20)).setMaxStringLength(256);
-        this.buttonList.add(this.commandLineSend = new GuiButtonExt(2, 22, this.height - 70, 150, 20, "Send"));
-        this.commandLineSend.visible = CommandLine.opened;
         this.previousScale = configuredScale;
     }
 
@@ -141,7 +131,6 @@ public class ClickGui extends GuiScreen {
         GlStateManager.pushMatrix();
         GlStateManager.scale(getRenderScale(), getRenderScale(), 1.0D);
 
-        int r;
         if (!Gui.removeWatermark.isToggled()) {
             int h = this.height / 4;
             int wd = this.width / 2;
@@ -155,7 +144,7 @@ public class ClickGui extends GuiScreen {
             this.drawVerticalLine(wd - 10 - w_c, h - 30, h + 43, Color.white.getRGB());
             this.drawVerticalLine(wd + 10 + w_c, h - 30, h + 43, Color.white.getRGB());
             if (this.logoSmoothLength != null) {
-                r = this.logoSmoothLength.getValueInt(0, 20, 2);
+                int r = this.logoSmoothLength.getValueInt(0, 20, 2);
                 this.drawHorizontalLine(wd - 10, wd - 10 + r, h - 29, -1);
                 this.drawHorizontalLine(wd + 10, wd + 10 - r, h + 42, -1);
             }
@@ -180,37 +169,6 @@ public class ClickGui extends GuiScreen {
             GlStateManager.enableBlend();
             GlStateManager.popMatrix();
         }
-
-
-        if (CommandLine.opened) {
-            if (!this.commandLineSend.visible) {
-                this.commandLineSend.visible = true;
-            }
-
-            r = CommandLine.animate.isToggled() ? CommandLine.animation.getValueInt(0, 200, 2) : 200;
-            if (CommandLine.closed) {
-                r = 200 - r;
-                if (r == 0) {
-                    CommandLine.closed = false;
-                    CommandLine.opened = false;
-                    this.commandLineSend.visible = false;
-                }
-            }
-            drawRect(0, 0, r, this.height, -1089466352);
-            this.drawHorizontalLine(0, r - 1, (this.height - 345), -1);
-            this.drawHorizontalLine(0, r - 1, (this.height - 115), -1);
-            drawRect(r - 1, 0, r, this.height, -1);
-            CommandHandler.renderCommandOutput(this.fontRendererObj, this.height, r, this.sr.getScaleFactor());
-            int x2 = r - 178;
-            this.commandLineInput.xPosition = x2;
-            this.commandLineSend.xPosition = x2;
-            this.commandLineInput.drawTextBox();
-            super.drawScreen(logicalMouseX, logicalMouseY, p);
-        }
-        else if (CommandLine.closed) {
-            CommandLine.closed = false;
-        }
-
         GlStateManager.popMatrix();
     }
 
@@ -251,11 +209,6 @@ public class ClickGui extends GuiScreen {
                     break;
                 }
             }
-        }
-
-        if (CommandLine.opened) {
-            this.commandLineInput.mouseClicked(mouseX, mouseY, mouseButton);
-            super.mouseClicked(mouseX, mouseY, mouseButton);
         }
 
         if (mouseButton == 0 || mouseButton == 1) {
@@ -352,22 +305,6 @@ public class ClickGui extends GuiScreen {
                     module.keyTyped(t, k);
                 }
             }
-        }
-        if (CommandLine.opened) {
-            String cm = this.commandLineInput.getText();
-            if (k == 28 && !cm.isEmpty()) {
-                CommandHandler.runCommand(this.commandLineInput.getText());
-                this.commandLineInput.setText("");
-                return;
-            }
-            this.commandLineInput.textboxKeyTyped(t, k);
-        }
-    }
-
-    public void actionPerformed(GuiButton b) {
-        if (b == this.commandLineSend) {
-            CommandHandler.runCommand(this.commandLineInput.getText());
-            this.commandLineInput.setText("");
         }
     }
 

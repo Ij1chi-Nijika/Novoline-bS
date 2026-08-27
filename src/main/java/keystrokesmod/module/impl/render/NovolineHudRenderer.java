@@ -75,8 +75,7 @@ final class NovolineHudRenderer {
     private static void drawArrayList(ScaledResolution resolution) {
         List<Module> modules = new ArrayList<Module>();
         for (Module module : ModuleManager.modules) {
-            if (module.isEnabled() && module != ModuleManager.hud && !module.isHidden()
-                    && module != ModuleManager.commandLine) {
+            if (module.isEnabled() && module != ModuleManager.hud && !module.isHidden()) {
                 modules.add(module);
             }
         }

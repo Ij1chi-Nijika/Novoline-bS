@@ -11,6 +11,6 @@ public class Ping extends Command {
 
     @Override
     public void execute(CommandInput input) {
-        PingHelper.checkPing(true);
+        PingHelper.checkPing();
     }
 }

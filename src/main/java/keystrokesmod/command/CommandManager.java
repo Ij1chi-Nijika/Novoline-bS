@@ -1,11 +1,12 @@
 package keystrokesmod.command;
 
-import keystrokesmod.command.impl.Binds;
 import keystrokesmod.command.impl.Bind;
+import keystrokesmod.command.impl.Binds;
 import keystrokesmod.command.impl.Cname;
 import keystrokesmod.command.impl.Debug;
 import keystrokesmod.command.impl.Enemy;
 import keystrokesmod.command.impl.Friend;
+import keystrokesmod.command.impl.Help;
 import keystrokesmod.command.impl.HideAll;
 import keystrokesmod.command.impl.IRCCommand;
 import keystrokesmod.command.impl.Name;
@@ -16,290 +17,199 @@ import keystrokesmod.command.impl.ShowAll;
 import keystrokesmod.command.impl.Toggle;
 import keystrokesmod.command.impl.Track;
 import keystrokesmod.command.impl.Unbind;
-import keystrokesmod.module.ModuleManager;
-import keystrokesmod.module.impl.client.ChatCommands;
 import keystrokesmod.utility.Utils;
 
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.LinkedHashSet;
+import java.util.Collections;
 import java.util.List;
-import java.util.Set;
 
+/** Client chat-command registry and dispatcher, based on Suzuran's command flow. */
 public class CommandManager {
+    public static final String DEFAULT_PREFIX = ".";
+
     private final List<Command> commands = new ArrayList<>();
+    private String[] latestAutoComplete = new String[0];
+    private String prefix = DEFAULT_PREFIX;
 
     public final Track trackCommand;
 
     public CommandManager() {
-        register(new Ping());
-        register(new Name());
-        register(new Toggle());
-        register(new Bind());
-        register(new Unbind());
-        register(new Binds());
-        register(new Cname());
-        register(new Debug());
-        register(new Friend());
-        register(new Enemy());
-        register(new Prefix());
-        register(trackCommand = new Track());
-        register(new Profiles());
-        register(new ShowAll());
-        register(new HideAll());
-        register(new IRCCommand());
+        registerCommand(new Ping());
+        registerCommand(new Name());
+        registerCommand(new Toggle());
+        registerCommand(new Bind());
+        registerCommand(new Unbind());
+        registerCommand(new Binds());
+        registerCommand(new Cname());
+        registerCommand(new Debug());
+        registerCommand(new Friend());
+        registerCommand(new Enemy());
+        registerCommand(new Prefix());
+        registerCommand(trackCommand = new Track());
+        registerCommand(new Profiles());
+        registerCommand(new ShowAll());
+        registerCommand(new HideAll());
+        registerCommand(new IRCCommand());
+        registerCommand(new Help());
     }
 
     public boolean handleChatMessage(String message) {
         if (!isCommand(message)) {
             return false;
         }
-
-        ParsedCommand parsed = parse(message, false);
-        if (parsed == null) {
-            return true;
-        }
-
-        if (parsed.command == null) {
-            Utils.sendMessage(formatOutput("&cUnknown command. Use tab to browse command suggestions."));
-            return true;
-        }
-
-        parsed.command.execute(parsed.input);
+        executeCommands(message);
         return true;
     }
 
-    public String[] getAutoComplete(String message) {
-        if (!isCommand(message)) {
-            return new String[0];
+    public void executeCommands(String input) {
+        if (!isCommand(input)) {
+            return;
         }
 
-        ParsedCommand parsed = parse(message, true);
-        if (parsed == null) {
-            return prefixSuggestions("");
+        String rawInput = input.substring(getPrefix().length());
+        String[] args = splitArguments(rawInput, false);
+        if (args.length == 0 || args[0].isEmpty()) {
+            sendUnknownCommand();
+            return;
         }
 
-        if (parsed.command == null) {
-            return prefixSuggestions(parsed.input.getLabel());
+        Command command = getCommand(args[0]);
+        if (command == null) {
+            sendUnknownCommand();
+            return;
         }
 
-        String[] labelSuggestions = getCommandLabelSuggestions(message, parsed);
-        if (labelSuggestions.length > 0) {
-            return labelSuggestions;
-        }
-
-        return buildAutoCompleteSuggestions(parsed, parsed.command.suggest(parsed.input));
+        String[] commandArgs = args.length == 1 ? new String[0] : Arrays.copyOfRange(args, 1, args.length);
+        command.execute(new CommandInput(input, args[0], commandArgs));
     }
 
-    public String[] getPreviewSuggestions(String message) {
-        if (!isCommand(message)) {
+    public boolean autoComplete(String input) {
+        latestAutoComplete = getCompletions(input);
+        return isCommand(input) && latestAutoComplete.length > 0;
+    }
+
+    private String[] getCompletions(String input) {
+        if (!isCommand(input)) {
             return new String[0];
         }
 
-        ParsedCommand parsed = parse(message, true);
-        if (parsed == null) {
-            return prefixSuggestions("");
-        }
-
-        if (parsed.command == null) {
-            return prefixSuggestions(parsed.input.getLabel());
-        }
-
-        String[] labelSuggestions = getCommandLabelSuggestions(message, parsed);
-        if (labelSuggestions.length > 0) {
-            return labelSuggestions;
-        }
-
-        List<String> suggestions = parsed.command.suggest(parsed.input);
-        if (suggestions == null || suggestions.isEmpty()) {
-            return new String[0];
-        }
-
-        Set<String> preview = new LinkedHashSet<>();
-        for (String suggestion : suggestions) {
-            if (suggestion != null && !suggestion.isEmpty()) {
-                preview.add(suggestion);
+        String rawInput = input.substring(getPrefix().length());
+        String[] args = splitArguments(rawInput, true);
+        if (args.length > 1) {
+            Command command = getCommand(args[0]);
+            if (command == null) {
+                return new String[0];
             }
-        }
-        return preview.toArray(new String[0]);
-    }
 
-    private String[] getCommandLabelSuggestions(String message, ParsedCommand parsed) {
-        if (parsed == null || parsed.input.argumentCount() != 0 || endsWithWhitespace(message)) {
-            return new String[0];
-        }
-
-        String[] suggestions = prefixSuggestions(parsed.input.getLabel());
-        for (String suggestion : suggestions) {
-            if (!suggestion.equalsIgnoreCase(message)) {
-                return suggestions;
-            }
+            String[] commandArgs = Arrays.copyOfRange(args, 1, args.length);
+            List<String> completions = command.suggest(new CommandInput(input, args[0], commandArgs));
+            return completions == null || completions.isEmpty()
+                ? new String[0]
+                : completions.toArray(new String[0]);
         }
 
-        return new String[0];
-    }
-
-    public boolean isEnabled() {
-        ChatCommands settings = getSettings();
-        return settings != null && settings.isEnabled();
-    }
-
-    public boolean isCommand(String message) {
-        return message != null && isEnabled() && message.startsWith(getPrefix());
-    }
-
-    public String getPrefix() {
-        ChatCommands settings = getSettings();
-        return settings != null ? settings.getPrefix() : ".";
-    }
-
-    public String formatOutput(String message) {
-        ChatCommands settings = getSettings();
-        if (settings != null && settings.lowercase()) {
-            return message.toLowerCase();
-        }
-        return message;
-    }
-
-    private void register(Command command) {
-        commands.add(command);
-    }
-
-    private ChatCommands getSettings() {
-        return ModuleManager.chatCommands;
-    }
-
-    private ParsedCommand parse(String message, boolean preserveTrailingArgument) {
-        String body = stripPrefix(message);
-        if (body == null) {
-            return null;
-        }
-
-        String normalizedBody = trimLeadingWhitespace(body);
-        if (normalizedBody.isEmpty()) {
-            return null;
-        }
-
-        String[] tokens = tokenize(normalizedBody, preserveTrailingArgument && endsWithWhitespace(body));
-        if (tokens.length == 0) {
-            return null;
-        }
-
-        String label = tokens[0];
-        String[] arguments = tokens.length > 1 ? Arrays.copyOfRange(tokens, 1, tokens.length) : new String[0];
-        return new ParsedCommand(findCommand(label), new CommandInput(message, label, arguments));
-    }
-
-    private String[] prefixSuggestions(String query) {
-        Set<String> suggestions = new LinkedHashSet<>();
-        String loweredQuery = query == null ? "" : query.toLowerCase();
-
+        String query = args.length == 0 ? "" : args[0];
+        List<String> completions = new ArrayList<>();
         for (Command command : commands) {
-            if (command.getName().toLowerCase().startsWith(loweredQuery)) {
-                suggestions.add(getPrefix() + command.getName());
-            }
-
-            for (String alias : command.getAliases()) {
-                if (alias.toLowerCase().startsWith(loweredQuery)) {
-                    suggestions.add(getPrefix() + alias);
-                }
+            String completion = matchingLabel(command, query);
+            if (completion != null) {
+                completions.add(getPrefix() + completion);
             }
         }
-
-        return suggestions.toArray(new String[0]);
+        return completions.toArray(new String[0]);
     }
 
-    private Command findCommand(String label) {
+    private String matchingLabel(Command command, String query) {
+        if (startsWithIgnoreCase(command.getName(), query)) {
+            return command.getName();
+        }
+        for (String alias : command.getAliases()) {
+            if (startsWithIgnoreCase(alias, query)) {
+                return alias;
+            }
+        }
+        return null;
+    }
+
+    private static boolean startsWithIgnoreCase(String value, String query) {
+        return query.length() <= value.length() && value.regionMatches(true, 0, query, 0, query.length());
+    }
+
+    public Command getCommand(String name) {
         for (Command command : commands) {
-            if (command.matches(label)) {
+            if (command.matches(name)) {
                 return command;
             }
         }
         return null;
     }
 
-    private String[] buildAutoCompleteSuggestions(ParsedCommand parsed, List<String> suggestions) {
-        if (suggestions == null || suggestions.isEmpty()) {
-            return new String[0];
+    public void registerCommand(Command command) {
+        if (command != null && getCommand(command.getName()) == null) {
+            commands.add(command);
         }
-
-        Set<String> normalized = new LinkedHashSet<>();
-        int replacementStart = Math.max(0, Math.min(parsed.input.argumentCount(), parsed.command.getSuggestionArgumentStart(parsed.input)));
-
-        for (String suggestion : suggestions) {
-            if (suggestion == null || suggestion.isEmpty()) {
-                continue;
-            }
-
-            StringBuilder completed = new StringBuilder(getPrefix()).append(parsed.input.getLabel());
-            for (int index = 0; index < replacementStart; index++) {
-                completed.append(' ').append(parsed.input.getArgument(index));
-            }
-
-            if (completed.length() > 0) {
-                completed.append(' ');
-            }
-            completed.append(suggestion);
-            normalized.add(completed.toString());
-        }
-
-        return normalized.toArray(new String[0]);
     }
 
-    private String stripPrefix(String message) {
-        if (!isCommand(message)) {
-            return null;
-        }
-        return message.substring(getPrefix().length());
+    public boolean unregisterCommand(Command command) {
+        return commands.remove(command);
     }
 
-    private static String trimLeadingWhitespace(String value) {
+    public List<Command> getCommands() {
+        return Collections.unmodifiableList(commands);
+    }
+
+    public String[] getLatestAutoComplete() {
+        return latestAutoComplete.clone();
+    }
+
+    public void clearAutoComplete() {
+        latestAutoComplete = new String[0];
+    }
+
+    public boolean isCommand(String message) {
+        return message != null && message.startsWith(prefix);
+    }
+
+    public String getPrefix() {
+        return prefix;
+    }
+
+    public void setPrefix(String prefix) {
+        if (isValidPrefix(prefix)) {
+            this.prefix = prefix;
+            clearAutoComplete();
+        }
+    }
+
+    public static boolean isValidPrefix(String prefix) {
+        return prefix != null && prefix.length() == 1 && !Character.isWhitespace(prefix.charAt(0));
+    }
+
+    public String formatOutput(String message) {
+        return message;
+    }
+
+    private void sendUnknownCommand() {
+        Utils.sendMessage(formatOutput("&cCommand not found. Type " + getPrefix() + "help to view all commands."));
+    }
+
+    private static String[] splitArguments(String input, boolean preserveTrailingArgument) {
+        if (input == null || input.isEmpty()) {
+            return new String[] {""};
+        }
+        String normalized = trimLeadingWhitespace(input);
+        if (normalized.isEmpty()) {
+            return new String[] {""};
+        }
+        return normalized.split(" +", preserveTrailingArgument ? -1 : 0);
+    }
+
+    private static String trimLeadingWhitespace(String input) {
         int index = 0;
-        while (index < value.length() && Character.isWhitespace(value.charAt(index))) {
+        while (index < input.length() && Character.isWhitespace(input.charAt(index))) {
             index++;
         }
-        return value.substring(index);
-    }
-
-    private static boolean endsWithWhitespace(String value) {
-        return !value.isEmpty() && Character.isWhitespace(value.charAt(value.length() - 1));
-    }
-
-    private static String[] tokenize(String value, boolean preserveTrailingEmptyArgument) {
-        List<String> tokens = new ArrayList<>();
-        int length = value.length();
-        int index = 0;
-
-        while (index < length) {
-            while (index < length && Character.isWhitespace(value.charAt(index))) {
-                index++;
-            }
-
-            if (index >= length) {
-                break;
-            }
-
-            int start = index;
-            while (index < length && !Character.isWhitespace(value.charAt(index))) {
-                index++;
-            }
-            tokens.add(value.substring(start, index));
-        }
-
-        if (preserveTrailingEmptyArgument) {
-            tokens.add("");
-        }
-
-        return tokens.toArray(new String[0]);
-    }
-
-    private static final class ParsedCommand {
-        private final Command command;
-        private final CommandInput input;
-
-        private ParsedCommand(Command command, CommandInput input) {
-            this.command = command;
-            this.input = input;
-        }
+        return input.substring(index);
     }
 }

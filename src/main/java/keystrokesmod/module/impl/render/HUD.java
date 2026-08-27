@@ -391,9 +391,6 @@ public class HUD extends Module {
         if (module.isHidden()) {
             return true;
         }
-        if (module == ModuleManager.commandLine) {
-            return true;
-        }
         return false;
     }
 
@@ -667,9 +664,6 @@ public class HUD extends Module {
             for (Module module : ModuleManager.organizedModules) {
                 if (module.isEnabled() && !module.getName().equals("HUD")) {
                     if (module.isHidden()) {
-                        continue;
-                    }
-                    if (module == ModuleManager.commandLine) {
                         continue;
                     }
                     return false;

@@ -1,7 +1,5 @@
 package keystrokesmod.module;
 
-import keystrokesmod.module.impl.client.ChatCommands;
-import keystrokesmod.module.impl.client.CommandLine;
 import keystrokesmod.module.impl.client.Gui;
 import keystrokesmod.module.impl.client.Relationships;
 import keystrokesmod.module.impl.client.Settings;
@@ -41,7 +39,6 @@ public class ModuleManager {
     public static FastMine fastMine;
     public static AntiShuffle antiShuffle;
     public static MovementFix movementFix;
-    public static CommandLine commandLine;
     public static LongJump longJump;
     public static AntiBot antiBot;
     public static NoSlow noSlow;
@@ -83,7 +80,6 @@ public class ModuleManager {
     public static AutoSwap autoSwap;
     public static Sprint sprint;
     public static Weather weather;
-    public static ChatCommands chatCommands;
     public static BlockIn blockIn;
     public static Relationships relationships;
     public static HideWindow hideWindow;
@@ -92,8 +88,6 @@ public class ModuleManager {
     public static IRC irc;
 
     public void register() {
-        this.addModule(chatCommands = new ChatCommands());
-        this.addModule(commandLine = new CommandLine());
         this.addModule(new Gui());
         this.addModule(new Settings());
         this.addModule(relationships = new Relationships());

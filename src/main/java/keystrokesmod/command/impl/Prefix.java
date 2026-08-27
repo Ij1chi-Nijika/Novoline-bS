@@ -2,8 +2,8 @@ package keystrokesmod.command.impl;
 
 import keystrokesmod.command.Command;
 import keystrokesmod.command.CommandInput;
-import keystrokesmod.module.ModuleManager;
-import keystrokesmod.module.impl.client.ChatCommands;
+import keystrokesmod.Raven;
+import keystrokesmod.command.CommandManager;
 
 import java.util.Arrays;
 import java.util.List;
@@ -18,7 +18,7 @@ public class Prefix extends Command {
     @Override
     public void execute(CommandInput input) {
         if (input.argumentCount() == 0) {
-            replyWithHeader("&7Current prefix: &b" + ModuleManager.chatCommands.getPrefix());
+            replyWithHeader("&7Current prefix: &b" + Raven.commandManager.getPrefix());
             return;
         }
 
@@ -28,13 +28,13 @@ public class Prefix extends Command {
         }
 
         String prefix = input.getArgument(0);
-        if (!ChatCommands.isValidPrefix(prefix)) {
+        if (!CommandManager.isValidPrefix(prefix)) {
             replyWithHeader("&7Prefix must be a single non-space character.");
             return;
         }
 
-        ModuleManager.chatCommands.setPrefix(prefix);
-        replyWithHeader("&7Chat command prefix set to &b" + ModuleManager.chatCommands.getPrefix() + "&7.");
+        Raven.commandManager.setPrefix(prefix);
+        replyWithHeader("&7Chat command prefix set to &b" + Raven.commandManager.getPrefix() + "&7.");
     }
 
     @Override

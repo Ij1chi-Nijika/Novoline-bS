@@ -1,81 +1,48 @@
 package keystrokesmod.helper;
 
-import keystrokesmod.utility.CommandHandler;
 import keystrokesmod.utility.Utils;
 import net.minecraftforge.client.event.ClientChatReceivedEvent;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 
 public class PingHelper {
-    private static boolean sendChat = false;
+    private static boolean waitingForResponse = false;
     private static long sendTime = 0L;
-    private static boolean sendChatCC = false;
-    private static long sendTimeCC = 0L;
 
     @SubscribeEvent
     public void onChatMessageRecieved(ClientChatReceivedEvent event) {
-        if ((sendChat ^ sendChatCC) && Utils.nullCheck()) {
+        if (waitingForResponse && Utils.nullCheck()) {
             if (Utils.stripColor(event.message.getUnformattedText()).startsWith("Unknown")) {
                 event.setCanceled(true);
-                this.getPing(sendChatCC);
-                sendChat = false;
-                sendChatCC = false;
+                this.getPing();
             }
         }
     }
 
-    public static void checkPing(boolean isChat) {
-        if (isChat) {
-            Utils.sendMessage("&7Checking ping...");
-        }
-        else {
-            CommandHandler.print("§3Checking...", 1);
-        }
+    public static void checkPing() {
+        Utils.sendMessage("&7Checking ping...");
 
-        if (sendChat) {
-            if (isChat) {
-                Utils.sendMessage("&7Please wait before checking again.");
-            }
-            else {
-                CommandHandler.print("§cPlease wait.", 0);
-            }
+        if (waitingForResponse) {
+            Utils.sendMessage("&7Please wait before checking again.");
             return;
         }
 
         Utils.mc.thePlayer.sendChatMessage("/...");
-        if (isChat) {
-            sendChatCC = true;
-            sendTimeCC = System.currentTimeMillis();
-        }
-        else {
-            sendChat = true;
-            sendTime = System.currentTimeMillis();
-        }
+        waitingForResponse = true;
+        sendTime = System.currentTimeMillis();
     }
 
-    private void getPing(boolean isChat) {
-        int ping = (int) (System.currentTimeMillis() - (isChat ? sendTimeCC : sendTime)) - 20;
+    private void getPing() {
+        int ping = (int) (System.currentTimeMillis() - sendTime) - 20;
         if (ping < 0) {
             ping = 0;
         }
 
-        if (isChat) {
-            Utils.sendMessage("&7Your ping: &b" + ping + "&7ms.");
-        }
-        else {
-            CommandHandler.print("Your ping: " + ping + "ms", 0);
-        }
-        reset(isChat);
+        Utils.sendMessage("&7Your ping: &b" + ping + "&7ms.");
+        reset();
     }
 
-    public static void reset(boolean isChat) {
-        if (isChat) {
-            sendChatCC = false;
-            sendTimeCC = 0L;
-        }
-        else {
-            sendChat = false;
-            sendTime = 0L;
-        }
+    public static void reset() {
+        waitingForResponse = false;
+        sendTime = 0L;
     }
 }
-
