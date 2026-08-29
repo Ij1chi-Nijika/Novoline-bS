@@ -48,6 +48,7 @@ public class Velocity extends Module {
     private final ButtonSetting onlySprinting;
     private final ButtonSetting smartTimes;
     private final SliderSetting attackTimes;
+    private final ButtonSetting predictionKeepSprint;
     private final ButtonSetting testMode;
     private final SliderSetting stopBlockHurtTime;
     private final ButtonSetting jump;
@@ -99,6 +100,7 @@ public class Velocity extends Module {
         this.registerSetting(onlySprinting = new ButtonSetting("Only sprinting", true));
         this.registerSetting(smartTimes = new ButtonSetting("Smart times", true));
         this.registerSetting(attackTimes = new SliderSetting("Attack times", 1.0, 1.0, 5.0, 1.0));
+        this.registerSetting(predictionKeepSprint = new ButtonSetting("Keep Sprint", false));
         this.registerSetting(testMode = new ButtonSetting("Test mode", false));
         this.registerSetting(stopBlockHurtTime = new SliderSetting("Stop block hurt time", 2.0, 0.0, 10.0, 1.0));
         this.registerSetting(jump = new ButtonSetting("Jump", true));
@@ -142,6 +144,7 @@ public class Velocity extends Module {
         onlySprinting.setVisible(reducing && reduceModeValue == 0, this);
         smartTimes.setVisible(reducing && reduceModeValue == 0, this);
         attackTimes.setVisible(reducing && reduceModeValue == 0 && !smartTimes.isToggled(), this);
+        predictionKeepSprint.setVisible(reducing && reduceModeValue == 0, this);
         testMode.setVisible(reducing && reduceModeValue == 0, this);
         stopBlockHurtTime.setVisible(reducing && reduceModeValue == 0 && testMode.isToggled(), this);
         jump.setVisible(prediction, this);
@@ -392,13 +395,18 @@ public class Velocity extends Module {
 
     private boolean performReduceAttack(Entity target) {
         if (target == null || target == mc.thePlayer) return false;
-        AttackEvent attackEvent = new AttackEvent(target, mc.thePlayer, false);
-        if (MinecraftForge.EVENT_BUS.post(attackEvent)) return false;
+
+        MinecraftForge.EVENT_BUS.post(new AttackEvent(target, mc.thePlayer, false));
         mc.thePlayer.sendQueue.addToSendQueue(new C0APacketAnimation());
-        mc.thePlayer.sendQueue.addToSendQueue(new C02PacketUseEntity(target, C02PacketUseEntity.Action.ATTACK));
+        if (MinecraftForge.EVENT_BUS.post(new AttackEvent(target, mc.thePlayer, false))) return false;
+        mc.thePlayer.sendQueue.addToSendQueue(
+                new C02PacketUseEntity(target, C02PacketUseEntity.Action.ATTACK));
+
         mc.thePlayer.motionX *= 0.6D;
         mc.thePlayer.motionZ *= 0.6D;
-        mc.thePlayer.setSprinting(false);
+        if (!predictionKeepSprint.isToggled()) {
+            mc.thePlayer.setSprinting(false);
+        }
         return true;
     }
 

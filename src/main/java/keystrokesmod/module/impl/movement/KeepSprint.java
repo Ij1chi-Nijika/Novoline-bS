@@ -1,9 +1,8 @@
 package keystrokesmod.module.impl.movement;
 
+import keystrokesmod.event.AttackEvent;
 import keystrokesmod.event.PreAttackEvent;
 import keystrokesmod.event.PrePlayerInteractEvent;
-import keystrokesmod.event.GameTickEvent;
-import keystrokesmod.event.SendPacketEvent;
 import keystrokesmod.module.Module;
 import keystrokesmod.module.ModuleManager;
 import keystrokesmod.module.impl.combat.KillAura;
@@ -12,21 +11,16 @@ import keystrokesmod.module.setting.impl.ButtonSetting;
 import keystrokesmod.module.setting.impl.DescriptionSetting;
 import keystrokesmod.module.setting.impl.SliderSetting;
 import keystrokesmod.utility.CombatTargeting;
-import keystrokesmod.utility.PacketUtils;
 import keystrokesmod.utility.Utils;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.player.EntityPlayer;
-import net.minecraft.network.play.client.C02PacketUseEntity;
-import net.minecraft.network.play.client.C0APacketAnimation;
 import net.minecraft.util.MovingObjectPosition;
 import net.minecraft.util.Vec3;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 
-import java.util.Deque;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
-import java.util.concurrent.ConcurrentLinkedDeque;
 
 public class KeepSprint extends Module {
     private static final String[] MODES = {"Normal", "Smart", "WatchDog"};
@@ -53,11 +47,8 @@ public class KeepSprint extends Module {
     private final ButtonSetting fakeSwing;
     private final SliderSetting inCombatCancelRate;
     private final SliderSetting missedSwingsCancelRate;
-    private final SliderSetting watchDogSlowdown;
-    private final SliderSetting watchDogTicks;
     private final Setting[] normalSettings;
     private final Setting[] smartSettings;
-    private final Setting[] watchDogSettings;
 
     private EntityPlayer currentTarget;
     private final Map<Integer, TargetState> targetStates = new HashMap<>();
@@ -68,17 +59,7 @@ public class KeepSprint extends Module {
     private boolean waitFirstUnlocked;
     private boolean smartStateActive;
     private int tickCounter;
-    private final Deque<DelayedAttack> delayedAttacks = new ConcurrentLinkedDeque<>();
-
-    private static final class DelayedAttack {
-        private final C02PacketUseEntity packet;
-        private int ticksRemaining;
-
-        private DelayedAttack(C02PacketUseEntity packet, int ticksRemaining) {
-            this.packet = packet;
-            this.ticksRemaining = ticksRemaining;
-        }
-    }
+    private Entity lastAttackTarget;
 
     public KeepSprint() {
         super("Keep Sprint", Module.category.movement, 0);
@@ -97,12 +78,9 @@ public class KeepSprint extends Module {
         this.registerSetting(fakeSwing = new ButtonSetting("Fake swing", false));
         this.registerSetting(inCombatCancelRate = new SliderSetting("In combat cancel rate", "%", 100.0D, 0.0D, 100.0D, 1.0D));
         this.registerSetting(missedSwingsCancelRate = new SliderSetting("Missed swings cancel rate", "%", 0.0D, 0.0D, 100.0D, 1.0D));
-        this.registerSetting(watchDogSlowdown = new SliderSetting("WatchDog slowdown", "%", 100.0D, 0.0D, 100.0D, 1.0D));
-        this.registerSetting(watchDogTicks = new SliderSetting("WatchDog ticks", 1.0D, 1.0D, 3.0D, 1.0D));
         normalSettings = new Setting[]{normalDescription, slow, stopSprint, disableWhileJump, reduceReachHits};
         smartSettings = new Setting[]{smartDescription, pauseDuration, waitForFirstHit, disableDuringKnockback,
                 useServerAttackTime, fakeSwing, inCombatCancelRate, missedSwingsCancelRate};
-        watchDogSettings = new Setting[]{watchDogSlowdown, watchDogTicks};
     }
 
     @Override
@@ -114,9 +92,6 @@ public class KeepSprint extends Module {
         for (Setting setting : smartSettings) {
             setting.setVisible(isSmart(), this);
         }
-        for (Setting setting : watchDogSettings) {
-            setting.setVisible(watchDog, this);
-        }
     }
 
     @Override
@@ -124,14 +99,14 @@ public class KeepSprint extends Module {
         tickCounter = 0;
         smartStateActive = isSmart();
         resetSmartState();
-        clearDelayedAttacks();
+        lastAttackTarget = null;
     }
 
     @Override
     public void onDisable() {
         smartStateActive = false;
         resetSmartState();
-        flushDelayedAttacks();
+        lastAttackTarget = null;
     }
 
     private boolean isSmart() {
@@ -142,8 +117,32 @@ public class KeepSprint extends Module {
         return (int) mode.getInput() == 2;
     }
 
+    public boolean isWatchDogMode() {
+        return isWatchDog();
+    }
+
+    public boolean shouldKeepSprint() {
+        if (mc.thePlayer == null) return false;
+        return isWatchDog();
+    }
+
+    public boolean isAttackNoSlow() {
+        return isEnabled() && shouldKeepSprint();
+    }
+
+    public double getSlowFactor() {
+        return isWatchDog() ? 1.0D : 0.6D;
+    }
+
     public static void keepSprint(Entity en) {
         if (ModuleManager.keepSprint != null && ModuleManager.keepSprint.isWatchDog()) {
+            KeepSprint keepSprint = ModuleManager.keepSprint;
+            double factor = keepSprint.getSlowFactor();
+            mc.thePlayer.motionX = mc.thePlayer.motionX / 0.6D * factor;
+            mc.thePlayer.motionZ = mc.thePlayer.motionZ / 0.6D * factor;
+            if (keepSprint.shouldKeepSprint()) {
+                mc.thePlayer.setSprinting(true);
+            }
             return;
         }
         boolean vanilla = false;
@@ -179,59 +178,17 @@ public class KeepSprint extends Module {
     }
 
     @SubscribeEvent
-    public void onSendPacket(SendPacketEvent event) {
-        if (!isWatchDog() || ModuleManager.reduce != null && ModuleManager.reduce.isEnabled()
-                || !(event.getPacket() instanceof C02PacketUseEntity)) return;
-        C02PacketUseEntity packet = (C02PacketUseEntity) event.getPacket();
-        if (packet.getAction() != C02PacketUseEntity.Action.ATTACK) return;
+    public void onAttack(AttackEvent event) {
+        lastAttackTarget = event.target;
 
-        event.setCanceled(true);
-        delayedAttacks.offer(new DelayedAttack(packet, (int) watchDogTicks.getInput()));
-    }
-
-    @SubscribeEvent
-    public void onGameTick(GameTickEvent event) {
-        if (!isWatchDog()) return;
-
-        for (DelayedAttack delayedAttack : delayedAttacks) {
-            delayedAttack.ticksRemaining--;
+        if (isWatchDog()) {
+            mc.thePlayer.swingItem();
         }
-        while (!delayedAttacks.isEmpty() && delayedAttacks.peek().ticksRemaining <= 0) {
-            releaseDelayedAttack(delayedAttacks.poll());
-        }
-    }
-
-    private void releaseDelayedAttack(DelayedAttack delayedAttack) {
-        if (delayedAttack == null || !Utils.nullCheck()) return;
-        PacketUtils.sendPacketNoEvent(new C0APacketAnimation());
-        PacketUtils.sendPacketNoEvent(delayedAttack.packet);
-        Entity target = delayedAttack.packet.getEntityFromWorld(mc.theWorld);
-        if (target != null) {
-            double factor = 0.6D + 0.4D * (1.0D - watchDogSlowdown.getInput() / 100.0D);
-            mc.thePlayer.motionX *= factor;
-            mc.thePlayer.motionZ *= factor;
-        }
-    }
-
-    private void flushDelayedAttacks() {
-        if (!Utils.nullCheck()) {
-            clearDelayedAttacks();
-            return;
-        }
-        while (!delayedAttacks.isEmpty()) {
-            DelayedAttack delayedAttack = delayedAttacks.poll();
-            PacketUtils.sendPacketNoEvent(new C0APacketAnimation());
-            PacketUtils.sendPacketNoEvent(delayedAttack.packet);
-        }
-    }
-
-    private void clearDelayedAttacks() {
-        delayedAttacks.clear();
     }
 
     @Override
     public String getInfo() {
-        return isWatchDog() ? "WatchDog " + (int) watchDogTicks.getInput() + "t" : MODES[(int) mode.getInput()];
+        return MODES[(int) mode.getInput()];
     }
 
     @SubscribeEvent

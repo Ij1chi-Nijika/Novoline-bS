@@ -45,6 +45,7 @@ import net.minecraft.util.BlockPos;
 import net.minecraft.util.EnumFacing;
 import net.minecraft.util.MovingObjectPosition;
 import net.minecraft.util.Vec3;
+import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.event.entity.EntityJoinWorldEvent;
 import net.minecraftforge.event.entity.living.LivingSetAttackTargetEvent;
 import net.minecraftforge.fml.common.eventhandler.EventPriority;
@@ -255,11 +256,14 @@ public class KillAura extends Module {
             if (now < nextClickTime) return;
             nextClickTime = now + nextDelay();
 
-            mc.thePlayer.swingItem();
-            if (targetDistance > attackRange.getInput() || !isRotationOnTarget(target, attackYaw, attackPitch)) return;
+            if (targetDistance > attackRange.getInput() || !isRotationOnTarget(target, attackYaw, attackPitch)) {
+                mc.thePlayer.swingItem();
+                return;
+            }
 
-            prepareAutoBlockAttack(target);
+            MinecraftForge.EVENT_BUS.post(new AttackEvent(target, mc.thePlayer, true));
             mc.playerController.attackEntity(mc.thePlayer, target);
+            mc.thePlayer.swingItem();
             hitRegistered = true;
             if (isHypixelWithoutNoSlow(getAutoBlockMode())) {
                 hypixelInteractionTarget = target;

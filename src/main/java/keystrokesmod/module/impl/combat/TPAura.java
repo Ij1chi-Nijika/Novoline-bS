@@ -1,12 +1,16 @@
 package keystrokesmod.module.impl.combat;
 
+import keystrokesmod.event.AttackEvent;
 import keystrokesmod.event.PreUpdateEvent;
+import keystrokesmod.mixin.impl.accessor.IAccessorPlayerControllerMP;
 import keystrokesmod.module.Module;
 import keystrokesmod.module.impl.world.AntiBot;
 import keystrokesmod.module.setting.impl.ButtonSetting;
 import keystrokesmod.module.setting.impl.SliderSetting;
 import keystrokesmod.utility.Utils;
 import net.minecraft.entity.player.EntityPlayer;
+import net.minecraft.network.play.client.C02PacketUseEntity;
+import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.event.entity.living.LivingEvent;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 
@@ -55,7 +59,12 @@ public class TPAura extends Module {
                     continue;
                 }
                 mc.thePlayer.setPosition(entityPlayer.posX + this.x, entityPlayer.posY + this.y, entityPlayer.posZ + this.z);
-                Utils.attackEntity(entityPlayer, true, false);
+                AttackEvent attackEvent = new AttackEvent(entityPlayer, mc.thePlayer, true);
+                if (MinecraftForge.EVENT_BUS.post(attackEvent)) continue;
+                mc.thePlayer.swingItem();
+                ((IAccessorPlayerControllerMP) mc.playerController).callSyncCurrentPlayItem();
+                mc.thePlayer.sendQueue.addToSendQueue(
+                        new C02PacketUseEntity(entityPlayer, C02PacketUseEntity.Action.ATTACK));
                 break;
             }
         }
