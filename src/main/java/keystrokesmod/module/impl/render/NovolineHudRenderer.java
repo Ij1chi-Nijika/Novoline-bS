@@ -161,7 +161,7 @@ final class NovolineHudRenderer {
     }
 
     private static void drawUserInfo(ScaledResolution resolution) {
-        String info = EnumChatFormatting.GRAY + "Build - " + EnumChatFormatting.WHITE + "#081326"
+        String info = EnumChatFormatting.GRAY + "Build - " + EnumChatFormatting.WHITE + "#091026"
                 + EnumChatFormatting.GRAY + " | UID - " + EnumChatFormatting.WHITE + MC.thePlayer.getName();
         draw(info, resolution.getScaledWidth() - width(info) - 2, resolution.getScaledHeight() - height() - 2, 0xFFFFFFFF, true);
     }
