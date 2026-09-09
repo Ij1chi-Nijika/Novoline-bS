@@ -4,6 +4,10 @@ import keystrokesmod.Raven;
 import keystrokesmod.event.AttackEvent;
 import keystrokesmod.event.ClientRotationEvent;
 import keystrokesmod.event.PrePlayerInteractEvent;
+import keystrokesmod.event.LeaderUpdateEvent;
+import keystrokesmod.utility.LeaderAutoBlockRuntime;
+import net.minecraft.client.settings.GameSettings;
+import net.minecraft.client.gui.inventory.GuiContainer;
 import keystrokesmod.event.RightClickMouseEvent;
 import keystrokesmod.event.SendPacketEvent;
 import keystrokesmod.event.UseItemEvent;
@@ -119,9 +123,14 @@ public class KillAura extends Module {
     private Entity autoBlockPendingInteractTarget;
     private LagRequest autoBlockBlinkRequest;
     private int autoBlockLastMode = -1;
-    private int autoBlockHypixelTick;
-    private boolean autoBlockHypixelSkipAttack;
-    private boolean autoBlockHypixelReblock;
+    private final WatchDogAutoBlock watchDogAutoBlock;
+    private final SliderSetting watchDogAps;
+    private final ButtonSetting watchDogLowTimerCheck, watchDogAllowPlayerBlocking, watchDogAllowTools;
+    private long watchDogAttackDelay;
+    private boolean watchDogBufferPending;
+    private final ButtonSetting watchDogPlayers, watchDogBosses, watchDogAnimals, watchDogGolems, watchDogSilverfish, watchDogBotCheck;
+
+
 
     public KillAura() {
         super("Kill Aura", category.combat);
@@ -151,11 +160,164 @@ public class KillAura extends Module {
         this.registerSetting(autoBlockGroup = new GroupSetting("Auto Block"));
         this.registerSetting(autoBlockEnabled = new ButtonSetting(autoBlockGroup, "Enable", false));
         this.registerSetting(autoBlockMode = new SliderSetting(autoBlockGroup, "Mode", 1, autoBlockModes));
+        watchDogAutoBlock = new WatchDogAutoBlock(this, autoBlockGroup);
+        registerSetting(watchDogPlayers = new ButtonSetting(autoBlockGroup, "Players", true));
+        registerSetting(watchDogBosses = new ButtonSetting(autoBlockGroup, "Bosses", false));
+        registerSetting(watchDogAnimals = new ButtonSetting(autoBlockGroup, "Animals", false));
+        registerSetting(watchDogGolems = new ButtonSetting(autoBlockGroup, "Golems", false));
+        registerSetting(watchDogSilverfish = new ButtonSetting(autoBlockGroup, "Silverfish", false));
+        registerSetting(watchDogBotCheck = new ButtonSetting(autoBlockGroup, "Bot Check", true));
+        registerSetting(watchDogAps = new SliderSetting(autoBlockGroup, "AutoBlock Aps", 10, 1, 20, 1));
+        registerSetting(watchDogLowTimerCheck = new ButtonSetting(autoBlockGroup, "Low Timer Check", true));
+        registerSetting(watchDogAllowTools = new ButtonSetting(autoBlockGroup, "Allow Tools", false));
+        registerSetting(watchDogAllowPlayerBlocking = new ButtonSetting(autoBlockGroup, "Allow Player Blocking", true));
         this.registerSetting(autoBlockRequirePress = new ButtonSetting(autoBlockGroup, "Require press", false));
         this.registerSetting(autoBlockMinAps = new SliderSetting(autoBlockGroup, "Minimum APS", 8.0, 1.0, 20.0, 1.0));
         this.registerSetting(autoBlockMaxAps = new SliderSetting(autoBlockGroup, "Maximum APS", 10.0, 1.0, 20.0, 1.0));
         this.registerSetting(autoBlockRange = new SliderSetting(autoBlockGroup, "Range", 6.0, 3.0, 8.0, 0.1));
         this.registerSetting(autoBlockIgnoreTeammates = new ButtonSetting(autoBlockGroup, "Ignore teammates for blocking", true));
+    }
+
+    @Override
+    public void guiUpdate() {
+        boolean watchdog = isAutoBlockEnabled() && getAutoBlockMode() == 8;
+        watchDogAutoBlock.updateVisibility(watchdog);
+        for (ButtonSetting setting : new ButtonSetting[]{watchDogPlayers, watchDogBosses, watchDogAnimals,
+                watchDogGolems, watchDogSilverfish, watchDogBotCheck}) setting.setVisible(watchdog, this);
+        watchDogAps.setVisible(watchdog, this);
+        watchDogLowTimerCheck.setVisible(watchdog, this);
+        watchDogAllowPlayerBlocking.setVisible(watchdog, this);
+        watchDogAllowTools.setVisible(watchdog && weaponOnly.isToggled(), this);
+        autoBlockMinAps.setVisible(!watchdog, this);
+        autoBlockMaxAps.setVisible(!watchdog, this);
+        autoBlockIgnoreTeammates.setVisible(!watchdog, this);
+    }
+
+    @SubscribeEvent(priority = EventPriority.LOW)
+    public void onWatchDogUpdate(LeaderUpdateEvent event) {
+        if (event.post) {
+            if (isAutoBlockEnabled() && getAutoBlockMode() == 8 && Utils.nullCheck()) watchDogAutoBlock.post();
+            return;
+        }
+        if (!isAutoBlockEnabled() || getAutoBlockMode() != 8 || !Utils.nullCheck()) return;
+        if (watchDogAttackDelay > 0L) watchDogAttackDelay -= 50L;
+        boolean attack = target != null && watchDogCanAttack();
+        boolean block = attack && Utils.holdingSword() && !Velocity.stoppedBlock
+                && !(watchDogSmartCancelled() && SmartAttack.cancelAuraBlocking.isToggled())
+                && (!autoBlockRequirePress.isToggled() || watchDogUsePressed());
+        if (!block) watchDogAutoBlock.noBlock();
+        Entity attacked = null;
+        if (attack) {
+            if (block) watchDogAutoBlock.pre();
+            autoBlockVisualBlocking = watchDogAutoBlock.visualBlocking();
+            if ((!block || !watchDogAutoBlock.skipAttack())
+                    && watchDogDistance(target) <= swingRange.getInput()
+                    && performWatchDogAttack()) attacked = target;
+            watchDogAutoBlock.finish(attacked);
+        }
+        autoBlockVisualBlocking = watchDogAutoBlock.visualBlocking();
+    }
+
+    private boolean watchDogSmartCancelled() {
+        return ModuleManager.smartAttack != null && ModuleManager.smartAttack.isEnabled()
+                && SmartAttack.shouldCancel && SmartAttack.onKillAura.isToggled();
+    }
+
+    private boolean watchDogBufferEnabled() {
+        return ModuleManager.keepSprint != null && ModuleManager.keepSprint.isEnabled()
+                && ModuleManager.keepSprint.isBufferMode();
+    }
+
+    private boolean performWatchDogAttack() {
+        if (watchDogPlayerBusy()) return false;
+        if (watchDogBufferPending) {
+            watchDogBufferPending = false;
+            if (target != null && !mc.thePlayer.isUsingItem() && !autoBlockServerBlocking && watchDogRayOnTarget()) {
+                sendWatchDogAttack();
+                return true;
+            }
+            return false;
+        }
+        if (Velocity.stoppedBlock || mc.thePlayer.isUsingItem() || autoBlockServerBlocking || watchDogAttackDelay > 0L) return false;
+        if (watchDogLowTimerCheck.isToggled()
+                && ((keystrokesmod.mixin.impl.accessor.IAccessorMinecraft) mc).getTimer().timerSpeed < 1.0F) return false;
+        if (watchDogSmartCancelled()) return false;
+        if (Velocity.extraAttacked) {
+            Velocity.extraAttacked = false;
+            if (ModuleManager.velocity != null) watchDogAutoBlock.onExtraAttack((int) ModuleManager.velocity.reduceMode.getInput());
+            return false;
+        }
+        int min = Math.max(1, (int) minCPS.getInput());
+        int max = Math.max(min, (int) maxCPS.getInput());
+        watchDogAttackDelay += watchDogAutoBlock.active() ? (long) (1000.0F / (float) watchDogAps.getInput())
+                : 1000L / (min + rand.nextInt(max - min + 1));
+        if (!watchDogBufferEnabled()) mc.thePlayer.swingItem();
+        if (!watchDogRayOnTarget()) return false;
+        if (watchDogBufferEnabled()) {
+            mc.thePlayer.setSprinting(false);
+            net.minecraft.client.settings.KeyBinding.setKeyBindState(mc.gameSettings.keyBindSprint.getKeyCode(), false);
+            if (!(mc.thePlayer.hurtTime > 0 && !ModuleManager.keepSprint.bufferOnHurt.isToggled())) {
+                watchDogBufferPending = true;
+                return false;
+            }
+        }
+        sendWatchDogAttack();
+        return true;
+    }
+
+    private boolean watchDogRayOnTarget() {
+        if (target == null) return false;
+        if (rotationMode.getInput() == 2 && watchDogDistance(target) <= attackRange.getInput()) return true;
+        Vec3 eyes = mc.thePlayer.getPositionEyes(1.0F);
+        Vec3 look = RotationUtils.getVectorForRotation(attackPitch, attackYaw);
+        double range = attackRange.getInput();
+        float border = target.getCollisionBorderSize();
+        AxisAlignedBB box = target.getEntityBoundingBox().expand(border, border, border);
+        return box.isVecInside(eyes) || box.calculateIntercept(eyes,
+                eyes.addVector(look.xCoord * range, look.yCoord * range, look.zCoord * range)) != null;
+    }
+
+    private void sendWatchDogAttack() {
+        if (watchDogBufferEnabled()) mc.thePlayer.swingItem();
+        MinecraftForge.EVENT_BUS.post(new AttackEvent(target, mc.thePlayer, true));
+        ((IAccessorPlayerControllerMP) mc.playerController).callSyncCurrentPlayItem();
+        mc.thePlayer.sendQueue.addToSendQueue(new C02PacketUseEntity(target, C02PacketUseEntity.Action.ATTACK));
+        if (!mc.playerController.isSpectatorMode()) mc.thePlayer.attackTargetEntityWithCurrentItem(target);
+        hitRegistered = true;
+    }
+
+    boolean watchDogPlayerBusy() { return LeaderAutoBlockRuntime.INSTANCE.digging || LeaderAutoBlockRuntime.INSTANCE.placing; }
+    boolean watchDogNoSlowEnabled() { return ModuleManager.noSlow != null && ModuleManager.noSlow.isEnabled(); }
+    private boolean watchDogUsePressed() { return mc.currentScreen == null && GameSettings.isKeyDown(mc.gameSettings.keyBindUseItem); }
+    private boolean watchDogCanAttack() {
+        if (disableInInventory.isToggled() && mc.currentScreen instanceof GuiContainer) return false;
+        if (weaponOnly.isToggled() && !watchDogHasWeapon()) return false;
+        ItemStack held = mc.thePlayer.getHeldItem();
+        if (held != null && watchDogUsePressed() && (held.getItem() instanceof net.minecraft.item.ItemBow
+                || held.getItemUseAction() == net.minecraft.item.EnumAction.EAT
+                || held.getItemUseAction() == net.minecraft.item.EnumAction.DRINK)) return false;
+        if (mc.playerController.getIsHittingBlock()) return false;
+        if (ModuleManager.scaffold != null && ModuleManager.scaffold.isEnabled()) return false;
+        if (ModuleManager.bedAura != null && ModuleManager.bedAura.isActivelyMining()) return false;
+        if (requireMouseDown.isToggled() && !GameSettings.isKeyDown(mc.gameSettings.keyBindAttack)) return false;
+        return !disableWhileMining.isToggled() || mc.objectMouseOver == null
+                || mc.objectMouseOver.typeOfHit != MovingObjectPosition.MovingObjectType.BLOCK
+                || !GameSettings.isKeyDown(mc.gameSettings.keyBindAttack);
+    }
+
+    private boolean watchDogHasWeapon() {
+        ItemStack stack = mc.thePlayer.getHeldItem();
+        if (stack == null) return false;
+        if (stack.hasTagCompound()) {
+            net.minecraft.nbt.NBTTagCompound tag = stack.getTagCompound();
+            long id = tag.getCompoundTag("ExtraAttributes").getLong("UHCid");
+            if (id == 50006L || id == 50009L) return true;
+            if (tag.hasKey("HideFlags") && stack.getItem() instanceof net.minecraft.item.ItemSpade
+                    && ((net.minecraft.item.ItemSpade) stack.getItem()).getToolMaterial() == net.minecraft.item.Item.ToolMaterial.EMERALD) return true;
+        }
+        if (!(stack.getItem() instanceof net.minecraft.item.ItemEnchantedBook)
+                && (stack.getItem() instanceof ItemSword || net.minecraft.enchantment.EnchantmentHelper.getEnchantments(stack).containsKey(19))) return true;
+        return watchDogAllowTools.isToggled() && stack.getItem() instanceof net.minecraft.item.ItemTool;
     }
 
     @Override
@@ -171,6 +333,9 @@ public class KillAura extends Module {
         switchIndex = 0;
         hitRegistered = false;
         resetAutoBlock();
+        watchDogAutoBlock.enable();
+        watchDogAttackDelay = 0L;
+        watchDogBufferPending = false;
     }
 
     @Override
@@ -187,11 +352,12 @@ public class KillAura extends Module {
         if (ModuleManager.bedAura != null && ModuleManager.bedAura.shouldOverrideMouseOver()) {
             return;
         }
-        if (!basicCondition() || !settingCondition()) {
+        boolean watchdog = isAutoBlockEnabled() && getAutoBlockMode() == 8;
+        if (!basicCondition() || !watchdog && !settingCondition()) {
             setTarget(null);
             return;
         }
-        updateTarget();
+        if (!watchdog) updateTarget();
         if (target == null) {
             return;
         }
@@ -235,42 +401,34 @@ public class KillAura extends Module {
 
     @SubscribeEvent
     public void onPrePlayerInteract(PrePlayerInteractEvent e) {
+        if (isAutoBlockEnabled() && getAutoBlockMode() == 8) return;
         handleAutoBlockPrePlayerInteract();
-        if (shouldSkipHypixelWithoutNoSlowAttack()) return;
-        Entity hypixelInteractionTarget = null;
-        try {
-            if (Velocity.stoppedBlock) return;
-            if (Velocity.extraAttacked && isAutoBlockActive()) {
-                Velocity.extraAttacked = false;
-                return;
-            }
-            if (!basicCondition() || !settingCondition() || target == null || target.isDead || target.deathTime > 0) return;
-            targetDistance = RotationUtils.distanceFromEyeToClosestOnAABB(target);
-            if (targetDistance > swingRange.getInput()) return;
-            if (notUsingItem.isToggled() && mc.thePlayer.isUsingItem()) return;
-
-            long now = System.currentTimeMillis();
-            if (nextClickTime == 0) {
-                nextClickTime = now;
-            }
-            if (now < nextClickTime) return;
-            nextClickTime = now + nextDelay();
-
-            if (targetDistance > attackRange.getInput() || !isRotationOnTarget(target, attackYaw, attackPitch)) {
-                mc.thePlayer.swingItem();
-                return;
-            }
-
-            MinecraftForge.EVENT_BUS.post(new AttackEvent(target, mc.thePlayer, true));
-            mc.playerController.attackEntity(mc.thePlayer, target);
-            mc.thePlayer.swingItem();
-            hitRegistered = true;
-            if (isHypixelWithoutNoSlow(getAutoBlockMode())) {
-                hypixelInteractionTarget = target;
-            }
-        } finally {
-            finishHypixelWithoutNoSlowCycle(hypixelInteractionTarget);
+        if (Velocity.stoppedBlock) return;
+        if (Velocity.extraAttacked && isAutoBlockActive()) {
+            Velocity.extraAttacked = false;
+            return;
         }
+        if (!basicCondition() || !settingCondition() || target == null || target.isDead || target.deathTime > 0) return;
+        targetDistance = RotationUtils.distanceFromEyeToClosestOnAABB(target);
+        if (targetDistance > swingRange.getInput()) return;
+        if (notUsingItem.isToggled() && mc.thePlayer.isUsingItem()) return;
+
+        long now = System.currentTimeMillis();
+        if (nextClickTime == 0) {
+            nextClickTime = now;
+        }
+        if (now < nextClickTime) return;
+        nextClickTime = now + nextDelay();
+
+        if (targetDistance > attackRange.getInput() || !isRotationOnTarget(target, attackYaw, attackPitch)) {
+            mc.thePlayer.swingItem();
+            return;
+        }
+
+        MinecraftForge.EVENT_BUS.post(new AttackEvent(target, mc.thePlayer, true));
+        mc.playerController.attackEntity(mc.thePlayer, target);
+        mc.thePlayer.swingItem();
+        hitRegistered = true;
     }
 
     @SubscribeEvent(priority = EventPriority.HIGHEST)
@@ -288,6 +446,26 @@ public class KillAura extends Module {
     }
 
     @SubscribeEvent
+    public void onWatchDogTick(TickEvent.ClientTickEvent event) {
+        if (isAutoBlockEnabled() && getAutoBlockMode() == 8 && Utils.nullCheck() && event.phase == TickEvent.Phase.START) updateWatchDogTarget();
+        if (isAutoBlockEnabled() && getAutoBlockMode() == 8 && Utils.nullCheck()
+                && event.phase == TickEvent.Phase.END && Utils.holdingSword()
+                && (mc.thePlayer.isUsingItem() || autoBlockServerBlocking) && !mc.thePlayer.isBlocking()) {
+            ItemStack stack = mc.thePlayer.getHeldItem();
+            mc.thePlayer.setItemInUse(stack, stack.getMaxItemUseDuration());
+        }
+    }
+
+    public boolean shouldCancelWatchDogInput() {
+        return isEnabled() && isAutoBlockEnabled() && getAutoBlockMode() == 8 && Utils.nullCheck()
+                && (watchDogAutoBlock.active() || target != null && watchDogCanAttack());
+    }
+
+    public boolean shouldKeepWatchDogUse() {
+        return isEnabled() && isAutoBlockEnabled() && getAutoBlockMode() == 8 && watchDogAutoBlock.active();
+    }
+
+    @SubscribeEvent
     public void onAutoBlockRenderTick(TickEvent.RenderTickEvent event) {
         if (event.phase != TickEvent.Phase.START) return;
         if (!isAutoBlockEnabled()) {
@@ -298,7 +476,7 @@ public class KillAura extends Module {
         ReflectionUtils.setItemInUse(Utils.holdingSword() && autoBlockVisualBlocking);
     }
 
-    @SubscribeEvent(priority = EventPriority.HIGH)
+    @SubscribeEvent(priority = EventPriority.LOW)
     public void onAutoBlockSendPacket(SendPacketEvent event) {
         if (!isAutoBlockEnabled()) return;
 
@@ -309,6 +487,7 @@ public class KillAura extends Module {
             }
         } else if (event.getPacket() instanceof C09PacketHeldItemChange) {
             autoBlockServerBlocking = false;
+            if (getAutoBlockMode() == 8 && watchDogAutoBlock.active() && Utils.nullCheck()) mc.thePlayer.stopUsingItem();
         } else if (isFakeAutoBlock() && event.getPacket() instanceof C08PacketPlayerBlockPlacement) {
             if (Utils.nullCheck() && Utils.holdingSword() && hasAutoBlockTarget()) {
                 event.setCanceled(true);
@@ -331,7 +510,7 @@ public class KillAura extends Module {
             mc.thePlayer.stopUsingItem();
             return;
         }
-        if (mode == 7 || isHypixelWithoutNoSlow(mode)) return;
+        if (mode == 7 || isWatchDog(mode)) return;
 
         if (mode == 1) { // Spoof
             stopAutoBlock(false);
@@ -372,36 +551,6 @@ public class KillAura extends Module {
             return;
         }
 
-        if (isHypixelWithoutNoSlow(mode)) {
-            autoBlockVisualBlocking = true;
-            autoBlockHypixelSkipAttack = false;
-            autoBlockHypixelReblock = false;
-            switch (autoBlockHypixelTick) {
-                case 0:
-                    // Leader-Lite blockTick 0: release the previous blink, then
-                    // attack/interact/reblock at the end of this interaction pass.
-                    releaseAutoBlockBlink();
-                    autoBlockHypixelReblock = !autoBlockServerBlocking;
-                    autoBlockHypixelSkipAttack = autoBlockServerBlocking;
-                    autoBlockHypixelTick = 1;
-                    break;
-                case 1:
-                    // Leader-Lite blockTick 1: keep blocking and skip the attack.
-                    autoBlockHypixelSkipAttack = true;
-                    autoBlockHypixelTick = 2;
-                    break;
-                case 2:
-                default:
-                    // Leader-Lite blockTick 2: blink the release and any attack
-                    // generated later in this same interaction pass.
-                    startAutoBlockBlink();
-                    stopAutoBlock(true);
-                    autoBlockHypixelTick = 0;
-                    break;
-            }
-            return;
-        }
-
         autoBlockVisualBlocking = mode >= 2 && mode <= 5;
         if (autoBlockPendingInteractTarget != null) {
             sendAutoBlockInteraction(autoBlockPendingInteractTarget);
@@ -427,40 +576,148 @@ public class KillAura extends Module {
         return getAutoBlockMode() == 7;
     }
 
-    private boolean isHypixelWithoutNoSlow(int mode) {
+    private boolean isWatchDog(int mode) {
         return mode == 8;
     }
 
-    private boolean shouldSkipHypixelWithoutNoSlowAttack() {
-        return isAutoBlockEnabled() && isHypixelWithoutNoSlow(getAutoBlockMode())
-                && autoBlockHypixelSkipAttack;
+    boolean watchDogServerBlocking() { return autoBlockServerBlocking; }
+
+    boolean watchDogHasTarget() {
+        for (Entity entity : mc.theWorld.loadedEntityList) {
+            if (entity instanceof EntityLivingBase && watchDogValidTarget((EntityLivingBase) entity)
+                    && watchDogDistance(entity) <= autoBlockRange.getInput()) return true;
+        }
+        return false;
     }
 
-    private void finishHypixelWithoutNoSlowCycle(Entity attackedTarget) {
-        if (!autoBlockHypixelReblock) return;
-        autoBlockHypixelReblock = false;
+    private double watchDogDistance(Entity entity) {
+        Vec3 eyes = mc.thePlayer.getPositionEyes(1.0F);
+        float border = entity.getCollisionBorderSize();
+        AxisAlignedBB box = entity.getEntityBoundingBox().expand(border, border, border);
+        double x = net.minecraft.util.MathHelper.clamp_double(eyes.xCoord, box.minX, box.maxX);
+        double y = net.minecraft.util.MathHelper.clamp_double(eyes.yCoord, box.minY, box.maxY);
+        double z = net.minecraft.util.MathHelper.clamp_double(eyes.zCoord, box.minZ, box.maxZ);
+        return eyes.distanceTo(new Vec3(x, y, z));
+    }
 
-        if (Velocity.stoppedBlock || !isAutoBlockReady() || !basicCondition() || !settingCondition()
-                || target == null || target.isDead || target.deathTime > 0) return;
+    private float watchDogAngle(Entity entity) {
+        float border = entity.getCollisionBorderSize();
+        Vec3 eyes = mc.thePlayer.getPositionEyes(1.0F);
+        if (entity.getEntityBoundingBox().expand(border, border, border).isVecInside(eyes)) return 0.0F;
+        return Math.abs(net.minecraft.util.MathHelper.wrapAngleTo180_float((float) Math.toDegrees(
+                Math.atan2(entity.posZ - eyes.zCoord, entity.posX - eyes.xCoord)) - 90.0F - mc.thePlayer.rotationYaw)) * 2.0F;
+    }
 
-        if (attackedTarget != null) {
-            sendHypixelWithoutNoSlowInteraction(attackedTarget);
-        } else {
-            startAutoBlock(mc.thePlayer.getHeldItem());
+    private boolean watchDogVisible(Entity entity) {
+        AxisAlignedBB box = entity.getEntityBoundingBox();
+        Vec3 eyes = mc.thePlayer.getPositionEyes(1.0F);
+        for (int i = 1; i <= 9; i++) {
+            Vec3 point = new Vec3((box.minX + box.maxX) * 0.5D, box.minY + i * 0.1D * (box.maxY - box.minY),
+                    (box.minZ + box.maxZ) * 0.5D);
+            if (mc.theWorld.rayTraceBlocks(eyes, point) == null) return true;
         }
+        return false;
+    }
+
+    private boolean watchDogTeamColor(EntityLivingBase entity) {
+        net.minecraft.client.network.NetworkPlayerInfo self = mc.getNetHandler().getPlayerInfo(mc.thePlayer.getUniqueID());
+        if (self == null || self.getPlayerTeam() == null || self.getPlayerTeam().getColorPrefix().length() < 2) return false;
+        EntityLivingBase stand = mc.theWorld.findNearestEntityWithinAABB(EntityArmorStand.class, entity.getEntityBoundingBox(), entity);
+        return stand != null && stand.getName().contains(self.getPlayerTeam().getColorPrefix().substring(0, 2));
+    }
+
+    private boolean watchDogSameTeam(EntityPlayer entity) {
+        net.minecraft.client.network.NetworkPlayerInfo self = mc.getNetHandler().getPlayerInfo(mc.thePlayer.getUniqueID());
+        net.minecraft.client.network.NetworkPlayerInfo other = mc.getNetHandler().getPlayerInfo(entity.getUniqueID());
+        return self != null && other != null && self.getPlayerTeam() != null && other.getPlayerTeam() != null
+                && self.getPlayerTeam().getColorPrefix().equals(other.getPlayerTeam().getColorPrefix());
+    }
+
+    private boolean watchDogBot(EntityPlayer entity) {
+        net.minecraft.client.network.NetworkPlayerInfo info = mc.getNetHandler().getPlayerInfo(entity.getName());
+        if (info == null) return true;
+        net.minecraft.scoreboard.Scoreboard scoreboard = mc.theWorld.getScoreboard();
+        net.minecraft.scoreboard.ScoreObjective objective = scoreboard.getObjectiveInDisplaySlot(1);
+        String first = "";
+        if (objective != null) {
+            for (net.minecraft.scoreboard.Score score : scoreboard.getSortedScores(objective)) {
+                first = net.minecraft.scoreboard.ScorePlayerTeam.formatPlayerName(scoreboard.getPlayersTeam(score.getPlayerName()), score.getPlayerName());
+                break;
+            }
+        }
+        if (!first.equals("§ewww.hypixel.ne🎂§et") && !first.equals("§ewww.hypixel.ne§g§et")) return false;
+        if (entity.getName().startsWith("§k")) return entity.isInvisible();
+        if (info.getResponseTime() < 1) return true;
+        net.minecraft.scoreboard.ScorePlayerTeam team = info.getPlayerTeam();
+        return team != null && team.getTeamName().isEmpty() && team.getColorPrefix().equals("§c");
+    }
+
+    private boolean watchDogValidTarget(EntityLivingBase entity) {
+        Entity view = mc.getRenderViewEntity();
+        if (!mc.theWorld.loadedEntityList.contains(entity) || entity == mc.thePlayer || entity == mc.thePlayer.ridingEntity
+                || entity == view || view != null && entity == view.ridingEntity || entity.deathTime > 0
+                || watchDogAngle(entity) > fov.getInput() || !aimThroughBlocks.isToggled() && !watchDogVisible(entity)) return false;
+        if (entity instanceof net.minecraft.client.entity.EntityOtherPlayerMP) {
+            return watchDogPlayers.isToggled() && !Utils.isFriended((EntityPlayer) entity)
+                    && (!ignoreTeammates.isToggled() || !watchDogSameTeam((EntityPlayer) entity))
+                    && (!watchDogBotCheck.isToggled() || !watchDogBot((EntityPlayer) entity));
+        }
+        if (entity instanceof net.minecraft.entity.boss.EntityDragon || entity instanceof net.minecraft.entity.boss.EntityWither) return watchDogBosses.isToggled();
+        if (entity instanceof net.minecraft.entity.monster.EntityMob || entity instanceof net.minecraft.entity.monster.EntitySlime) {
+            return entity instanceof EntitySilverfish ? watchDogSilverfish.isToggled()
+                    && (!ignoreTeammates.isToggled() || !watchDogTeamColor(entity)) : attackMobs.isToggled();
+        }
+        if (entity instanceof net.minecraft.entity.passive.EntityAnimal || entity instanceof net.minecraft.entity.passive.EntityBat
+                || entity instanceof net.minecraft.entity.passive.EntitySquid || entity instanceof net.minecraft.entity.passive.EntityVillager) return watchDogAnimals.isToggled();
+        return entity instanceof EntityIronGolem && watchDogGolems.isToggled()
+                && (!ignoreTeammates.isToggled() || !watchDogTeamColor(entity));
+    }
+
+    private void updateWatchDogTarget() {
+        long now = System.currentTimeMillis();
+        if (target != null && watchDogValidTarget(target) && watchDogDistance(target) <= attackRange.getInput()
+                && watchDogDistance(target) <= swingRange.getInput() && now - lastTargetSwitch < switchDelay.getInput()) return;
+        lastTargetSwitch = now;
+        double range = Math.max(autoBlockRange.getInput(), Math.max(attackRange.getInput(), swingRange.getInput()));
+        List<EntityLivingBase> candidates = new ArrayList<>();
+        for (Entity entity : mc.theWorld.loadedEntityList) {
+            if (entity instanceof EntityLivingBase && watchDogValidTarget((EntityLivingBase) entity)
+                    && watchDogDistance(entity) <= range) candidates.add((EntityLivingBase) entity);
+        }
+        if (candidates.stream().anyMatch(entity -> watchDogDistance(entity) <= swingRange.getInput())) candidates.removeIf(entity -> watchDogDistance(entity) > swingRange.getInput());
+        if (candidates.stream().anyMatch(entity -> watchDogDistance(entity) <= attackRange.getInput())) candidates.removeIf(entity -> watchDogDistance(entity) > attackRange.getInput());
+        if (candidates.stream().anyMatch(entity -> entity instanceof EntityPlayer && Utils.isEnemy((EntityPlayer) entity))) candidates.removeIf(entity -> !(entity instanceof EntityPlayer) || !Utils.isEnemy((EntityPlayer) entity));
+        candidates.sort((a, b) -> {
+            int order = 0;
+            switch ((int) sortMode.getInput()) {
+                case 1: order = Float.compare(a.getHealth() * (20.0F / a.getTotalArmorValue()), b.getHealth() * (20.0F / b.getTotalArmorValue())); break;
+                case 2: order = Integer.compare(a.hurtResistantTime, b.hurtResistantTime); break;
+                case 3: order = Float.compare(watchDogAngle(a), watchDogAngle(b)); break;
+            }
+            return order != 0 ? order : Double.compare(watchDogDistance(a), watchDogDistance(b));
+        });
+        if (candidates.isEmpty()) { setTarget(null); return; }
+        if (mode.getInput() == 1 && hitRegistered) { hitRegistered = false; switchIndex++; }
+        if (mode.getInput() == 0 || switchIndex >= candidates.size()) switchIndex = 0;
+        setTarget(candidates.get(switchIndex));
+    }
+
+    boolean watchDogAttackDueSoon() {
+        return watchDogAttackDelay <= 50L;
     }
 
     /**
      * Leader-Lite's interactAttack sequence: ray trace the attacked entity using
      * the aura rotation, send INTERACT_AT and INTERACT, then start sword blocking.
      */
-    private void sendHypixelWithoutNoSlowInteraction(Entity entity) {
+    void sendWatchDogInteraction(Entity entity) {
         if (entity == null || entity.isDead) return;
 
         Vec3 eyes = mc.thePlayer.getPositionEyes(1.0F);
         Vec3 look = RotationUtils.getVectorForRotation(attackPitch, attackYaw);
         Vec3 rayEnd = eyes.addVector(look.xCoord * 8.0, look.yCoord * 8.0, look.zCoord * 8.0);
-        MovingObjectPosition intercept = entity.getEntityBoundingBox().calculateIntercept(eyes, rayEnd);
+        float border = entity.getCollisionBorderSize();
+        MovingObjectPosition intercept = entity.getEntityBoundingBox().expand(border, border, border).calculateIntercept(eyes, rayEnd);
         if (intercept == null) return;
 
         Vec3 relativeHit = new Vec3(
@@ -501,6 +758,10 @@ public class KillAura extends Module {
     }
 
     private boolean shouldCancelAutoBlockUse() {
+        if (getAutoBlockMode() == 8 && isAutoBlockEnabled()) {
+            return watchDogAutoBlock.active() || target != null && Utils.nullCheck()
+                    && watchDogCanAttack() && !watchDogAllowPlayerBlocking.isToggled();
+        }
         return isAutoBlockReady() && (autoBlockServerBlocking || autoBlockVisualBlocking || isFakeAutoBlock());
     }
 
@@ -523,7 +784,7 @@ public class KillAura extends Module {
         if (mode == 3) startAutoBlockBlink();
     }
 
-    private void startAutoBlock(ItemStack stack) {
+    void startAutoBlock(ItemStack stack) {
         if (stack == null || !(stack.getItem() instanceof ItemSword)) return;
         ((IAccessorPlayerControllerMP) mc.playerController).callSyncCurrentPlayItem();
         mc.thePlayer.sendQueue.addToSendQueue(new C08PacketPlayerBlockPlacement(stack));
@@ -541,20 +802,34 @@ public class KillAura extends Module {
         autoBlockServerBlocking = false;
     }
 
-    private void startAutoBlockBlink() {
+    void startAutoBlockBlink() {
+        if (getAutoBlockMode() == 8) { LeaderAutoBlockRuntime.INSTANCE.setBlink(true); return; }
         if (autoBlockBlinkRequest != null) return;
         autoBlockBlinkRequest = new LagRequest(EnumLagDirection.ONLY_OUTBOUND, new ModuleBackedTimeout(this));
         Raven.lagHandler.requestLag(autoBlockBlinkRequest);
     }
 
-    private void releaseAutoBlockBlink() {
+    void releaseAutoBlockBlink() {
+        if (getAutoBlockMode() == 8 || autoBlockLastMode == 8) LeaderAutoBlockRuntime.INSTANCE.setBlink(false);
         if (autoBlockBlinkRequest == null) return;
         autoBlockBlinkRequest.getTimeout().forceTimeOut();
         autoBlockBlinkRequest = null;
     }
 
+    public int getWatchDogBlockTick() {
+        return watchDogAutoBlock.blockTick();
+    }
+
+    public boolean isNoSlowAutoBlocking() {
+        return (getAutoBlockMode() == 8 ? isEnabled() && isAutoBlockEnabled() && watchDogAutoBlock.active() : isAutoBlockActive())
+                && Utils.nullCheck() && Utils.holdingSword()
+                && (mc.thePlayer.isUsingItem() || autoBlockServerBlocking)
+                && !mc.thePlayer.isInWater() && !mc.thePlayer.isInLava();
+    }
+
     public boolean isAutoBlockActive() {
-        return isEnabled() && isAutoBlockEnabled() && (autoBlockServerBlocking || autoBlockBlinkRequest != null);
+        return isEnabled() && isAutoBlockEnabled() && (autoBlockServerBlocking || autoBlockBlinkRequest != null
+                || getAutoBlockMode() == 8 && watchDogAutoBlock.active());
     }
 
     private void sendAutoBlockInteraction(Entity entity) {
@@ -595,16 +870,17 @@ public class KillAura extends Module {
     }
 
     private void resetAutoBlock() {
-        if (Utils.nullCheck()) stopAutoBlock(true);
+        boolean watchdog = autoBlockLastMode == 8 || getAutoBlockMode() == 8;
+        watchDogBufferPending = false;
+        if (watchDogAutoBlock != null && watchdog) watchDogAutoBlock.reset();
+        if (!watchdog && Utils.nullCheck()) stopAutoBlock(true);
+        autoBlockServerBlocking = false;
         releaseAutoBlockBlink();
         autoBlockVisualBlocking = false;
         autoBlockPendingReblock = false;
         autoBlockPendingInteractTarget = null;
         autoBlockTarget = null;
         autoBlockLastMode = -1;
-        autoBlockHypixelTick = 0;
-        autoBlockHypixelSkipAttack = false;
-        autoBlockHypixelReblock = false;
         ReflectionUtils.setItemInUse(false);
     }
 
@@ -627,6 +903,7 @@ public class KillAura extends Module {
     @SubscribeEvent
     public void onWorldJoin(EntityJoinWorldEvent e) {
         if (e.entity == mc.thePlayer) {
+            resetAutoBlock();
             hostileMobs.clear();
             golems.clear();
             setTarget(null);
@@ -890,7 +1167,8 @@ public class KillAura extends Module {
     private long nextDelay() {
         int cps;
         if (isAutoBlockEnabled() && getAutoBlockMode() != 7
-                && (autoBlockServerBlocking || autoBlockPendingReblock || autoBlockVisualBlocking)) {
+                && (autoBlockServerBlocking || autoBlockPendingReblock || autoBlockVisualBlocking
+                || getAutoBlockMode() == 8 && watchDogAutoBlock.active())) {
             int minAps = Math.max(1, (int) autoBlockMinAps.getInput());
             int maxAps = Math.max(1, (int) autoBlockMaxAps.getInput());
             int lower = Math.min(minAps, maxAps);

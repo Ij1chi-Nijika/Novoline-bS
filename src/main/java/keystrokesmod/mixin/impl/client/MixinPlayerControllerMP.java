@@ -30,6 +30,11 @@ public class MixinPlayerControllerMP {
     @Shadow
     private int blockHitDelay;
 
+    @Inject(method = "onStoppedUsingItem", at = @At("HEAD"), cancellable = true)
+    private void watchDogKeepUsingItem(EntityPlayer player, CallbackInfo ci) {
+        if (ModuleManager.killAura != null && ModuleManager.killAura.shouldKeepWatchDogUse()) ci.cancel();
+    }
+
     @Inject(method = "sendUseItem(Lnet/minecraft/entity/player/EntityPlayer;Lnet/minecraft/world/World;Lnet/minecraft/item/ItemStack;)Z", at = @At("HEAD"))
     public void injectUseItemEvent(EntityPlayer p_sendUseItem_1_, World p_sendUseItem_2_, ItemStack p_sendUseItem_3_, CallbackInfoReturnable<Boolean> ci) {
         UseItemEvent event = new UseItemEvent(p_sendUseItem_3_);

@@ -5,6 +5,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import keystrokesmod.module.Module;
+import keystrokesmod.module.ModuleManager;
 import keystrokesmod.module.setting.impl.TextSetting;
 import keystrokesmod.utility.Utils;
 import net.minecraft.client.network.NetworkPlayerInfo;
@@ -24,6 +25,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public class IRC extends Module {
     private static final String DEFAULT_SERVER = "ws://irc.fedal.icu:7886";
     private static final int CLIENT_ID = 1;
+    private static final String CLIENT_NAME = "Novoline-bS";
     private static final int MAX_MESSAGE_LENGTH = 256;
     private static final Map<String, String> CLIENT_STRINGS = new ConcurrentHashMap<String, String>();
 
@@ -237,11 +239,22 @@ public class IRC extends Module {
 
         String clientString = CLIENT_STRINGS.get(normalize(playerInfo.getGameProfile().getName()));
         if (clientString == null || clientString.isEmpty()) {
+            IRC irc = ModuleManager.irc;
+            WebSocketClient current = irc == null ? null : irc.socket;
+            boolean self = mc.thePlayer != null
+                    ? mc.thePlayer.getUniqueID().equals(playerInfo.getGameProfile().getId())
+                    : currentUsername().equalsIgnoreCase(playerInfo.getGameProfile().getName());
+            // The server's user list may omit the receiving client.
+            if (self && irc != null && irc.isEnabled() && current != null && current.isOpen()) {
+                clientString = CLIENT_NAME;
+            }
+        }
+        if (clientString == null || clientString.isEmpty()) {
             return original;
         }
 
         String suffix = "\u00a77 (\u00a7b" + clientString + "\u00a77)";
-        return original.endsWith(suffix) ? original : original + suffix;
+        return original.replace(suffix, "") + suffix;
     }
 
     private static String currentUsername() {

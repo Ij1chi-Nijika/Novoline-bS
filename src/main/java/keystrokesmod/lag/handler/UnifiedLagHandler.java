@@ -45,6 +45,7 @@ public final class UnifiedLagHandler extends AbstractFastTrackProvider {
     public void onSendPacket(final @NotNull SendPacketEvent event) {
         if (Minecraft.getMinecraft().getNetHandler() == null) {
             queue.clear();
+            keystrokesmod.utility.LeaderAutoBlockRuntime.INSTANCE.disconnect();
             clearServerPositions();
             return;
         }
@@ -61,6 +62,11 @@ public final class UnifiedLagHandler extends AbstractFastTrackProvider {
             return;
         }
 
+        if (keystrokesmod.utility.LeaderAutoBlockRuntime.INSTANCE.handlePacket(packet)) {
+            event.setCanceled(true);
+            return;
+        }
+
         if (queue.tick(packet, EnumLagDirection.OUTBOUND)) {
             event.setCanceled(true);
             return;
@@ -73,6 +79,7 @@ public final class UnifiedLagHandler extends AbstractFastTrackProvider {
     public void onReceivePacket(final @NotNull ReceivePacketEvent event) {
         if (Minecraft.getMinecraft().getNetHandler() == null) {
             queue.clear();
+            keystrokesmod.utility.LeaderAutoBlockRuntime.INSTANCE.disconnect();
             clearServerPositions();
             return;
         }
@@ -97,11 +104,19 @@ public final class UnifiedLagHandler extends AbstractFastTrackProvider {
     public void onGameTick(final @NotNull GameTickEvent event) {
         if (Minecraft.getMinecraft().getNetHandler() == null) {
             queue.clear();
+            keystrokesmod.utility.LeaderAutoBlockRuntime.INSTANCE.disconnect();
             clearServerPositions();
             return;
         }
 
         queue.tick(null, null);
+    }
+
+    @SubscribeEvent
+    public void onClientTick(net.minecraftforge.fml.common.gameevent.TickEvent.ClientTickEvent event) {
+        if (event.phase == net.minecraftforge.fml.common.gameevent.TickEvent.Phase.END) {
+            keystrokesmod.utility.LeaderAutoBlockRuntime.INSTANCE.tick();
+        }
     }
 
     @Override

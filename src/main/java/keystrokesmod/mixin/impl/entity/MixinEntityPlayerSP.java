@@ -97,6 +97,9 @@ public abstract class MixinEntityPlayerSP extends AbstractClientPlayer {
             return;
         }
 
+        if (this.worldObj.isBlockLoaded(new BlockPos(this.posX, 0.0, this.posZ))) {
+            net.minecraftforge.common.MinecraftForge.EVENT_BUS.post(new keystrokesmod.event.LeaderUpdateEvent(false));
+        }
         if (Utils.isLocalPlayerSubUpdate()) {
             return;
         }
@@ -111,6 +114,9 @@ public abstract class MixinEntityPlayerSP extends AbstractClientPlayer {
 
     @Inject(method = "onUpdate", at = @At("RETURN"))
     private void onUpdatePost(CallbackInfo c) {
+        if (this.worldObj.isBlockLoaded(new BlockPos(this.posX, 0.0, this.posZ))) {
+            net.minecraftforge.common.MinecraftForge.EVENT_BUS.post(new keystrokesmod.event.LeaderUpdateEvent(true));
+        }
         if (Utils.isLocalPlayerSubUpdate()) {
             return;
         }
@@ -146,6 +152,7 @@ public abstract class MixinEntityPlayerSP extends AbstractClientPlayer {
 
     @Overwrite
     public void onUpdateWalkingPlayer() {
+        NoSlow.updateFloat();
         PreMotionEvent.setRotations = false;
         PreMotionEvent.setRenderYaw(false);
         RotationUtils.setFakeRotations = false;
@@ -295,10 +302,10 @@ public abstract class MixinEntityPlayerSP extends AbstractClientPlayer {
         float f = 0.8F;
         boolean flag2 = this.movementInput.moveForward >= f;
         this.movementInput.updatePlayerMoveState();
-        boolean stopSprint = ModuleManager.noSlow == null || !ModuleManager.noSlow.isEnabled() || NoSlow.slowed.getInput() == 80;
-        if (this.isUsingItem() && !this.isRiding()) {
+        boolean stopSprint = !NoSlow.isActive();
+        if (this.isUsingItem() && stopSprint && !this.isRiding()) {
             MovementInput var10000 = this.movementInput;
-            float slowed = NoSlow.getSlowed();
+            float slowed = 0.2F;
             var10000.moveStrafe *= slowed;
             var10000 = this.movementInput;
             var10000.moveForward *= slowed;
@@ -394,6 +401,7 @@ public abstract class MixinEntityPlayerSP extends AbstractClientPlayer {
             this.horseJumpPower = 0.0F;
         }
 
+        NoSlow.applyMotion();
         super.onLivingUpdate();
         if (this.onGround && this.capabilities.isFlying && !this.mc.playerController.isSpectatorMode()) {
             this.capabilities.isFlying = false;

@@ -49,6 +49,10 @@ public class MixinMinecraft {
 
     @Inject(method = "clickMouse", at = @At("HEAD"), cancellable = true)
     public void injectClickMouse(CallbackInfo ci) {
+        if (ModuleManager.killAura != null && ModuleManager.killAura.shouldCancelWatchDogInput()) {
+            ci.cancel();
+            return;
+        }
         Minecraft mc = (Minecraft) (Object) this;
         MovingObjectPosition mop = mc.objectMouseOver;
         PreAttackEvent preAttack = new PreAttackEvent(mop);
@@ -58,6 +62,11 @@ public class MixinMinecraft {
             return;
         }
         MinecraftForge.EVENT_BUS.post(new ClickMouseEvent());
+    }
+
+    @Inject(method = "sendClickBlockToController", at = @At("HEAD"), cancellable = true)
+    private void watchDogCancelMining(boolean leftClick, CallbackInfo ci) {
+        if (ModuleManager.killAura != null && ModuleManager.killAura.shouldCancelWatchDogInput()) ci.cancel();
     }
 
     @Inject(method = "rightClickMouse", at = @At("HEAD"), cancellable = true)

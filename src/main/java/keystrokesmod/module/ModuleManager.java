@@ -87,6 +87,9 @@ public class ModuleManager {
     public static Disabler disabler;
     public static IRC irc;
 
+    public static keystrokesmod.module.impl.player.BlinkSettings blinkSettings;
+    public static keystrokesmod.module.impl.combat.SmartAttack smartAttack;
+
     public void register() {
         this.addModule(new Gui());
         this.addModule(new Settings());
@@ -104,6 +107,7 @@ public class ModuleManager {
         this.addModule(displace = new Displace());
         this.addModule(hitBox = new HitBox());
         this.addModule(killAura = new KillAura());
+        this.addModule(smartAttack = new keystrokesmod.module.impl.combat.SmartAttack());
         this.addModule(knockbackDelay = new KnockbackDelay());
         this.addModule(new LagRange());
         this.addModule(piercing = new Piercing());
@@ -169,6 +173,7 @@ public class ModuleManager {
         this.addModule(autoTool = new AutoTool());
         this.addModule(bedAura = new BedAura());
         this.addModule(blink = new Blink());
+        this.addModule(blinkSettings = new keystrokesmod.module.impl.player.BlinkSettings());
         this.addModule(new DelayRemover());
         this.addModule(fastMine = new FastMine());
         this.addModule(fastPlace = new FastPlace());

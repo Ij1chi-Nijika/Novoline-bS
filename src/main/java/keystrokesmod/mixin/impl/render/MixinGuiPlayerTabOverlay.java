@@ -10,11 +10,20 @@ import net.minecraftforge.fml.relauncher.SideOnly;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @SideOnly(Side.CLIENT)
 @Mixin(GuiPlayerTabOverlay.class)
 public class MixinGuiPlayerTabOverlay {
+    @Redirect(method = "renderPlayerlist", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/gui/GuiPlayerTabOverlay;getPlayerName(Lnet/minecraft/client/network/NetworkPlayerInfo;)Ljava/lang/String;"))
+    private String raven$finalizeTabName(GuiPlayerTabOverlay overlay, NetworkPlayerInfo playerInfo) {
+        // Apply after all getPlayerName hooks, for both width calculation and rendering.
+        String name = overlay.getPlayerName(playerInfo);
+        return ModuleManager.irc != null && ModuleManager.irc.isEnabled()
+                ? IRC.getTabName(playerInfo, name) : name;
+    }
+
     @Inject(method = "getPlayerName", at = @At("RETURN"), cancellable = true)
     private void raven$decorateTabName(NetworkPlayerInfo networkPlayerInfoIn, CallbackInfoReturnable<String> cir) {
         String name = cir.getReturnValue();

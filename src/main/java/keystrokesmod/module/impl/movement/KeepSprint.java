@@ -23,7 +23,7 @@ import java.util.Iterator;
 import java.util.Map;
 
 public class KeepSprint extends Module {
-    private static final String[] MODES = {"Normal", "Smart", "WatchDog"};
+    private static final String[] MODES = {"Normal", "Smart", "WatchDog", "Buffer"};
     private static final double HIT_RANGE_SQ = 9.0D;
     private static final int HURT_WINDOW_TICKS = 10;
     private static final int SERVER_CONFIRM_COOLDOWN_TICKS = HURT_WINDOW_TICKS;
@@ -38,6 +38,7 @@ public class KeepSprint extends Module {
     public static ButtonSetting reduceReachHits;
 
     private final SliderSetting mode;
+    public final ButtonSetting bufferOnHurt;
     private final DescriptionSetting normalDescription;
     private final DescriptionSetting smartDescription;
     private final SliderSetting pauseDuration;
@@ -64,6 +65,7 @@ public class KeepSprint extends Module {
     public KeepSprint() {
         super("Keep Sprint", Module.category.movement, 0);
         this.registerSetting(mode = new SliderSetting("Mode", 0, MODES));
+        registerSetting(bufferOnHurt = new ButtonSetting("OnHurt", false));
         this.registerSetting(normalDescription = new DescriptionSetting("Default is 40% motion reduction."));
         this.registerSetting(slow = new SliderSetting("Slow %", 40.0D, 0.0D, 40.0D, 1.0D));
         this.registerSetting(stopSprint = new ButtonSetting("Stop Sprint", true));
@@ -85,7 +87,8 @@ public class KeepSprint extends Module {
 
     @Override
     public void guiUpdate() {
-        boolean watchDog = isWatchDog();
+        bufferOnHurt.setVisible(isBufferMode(), this);
+        boolean watchDog = isWatchDog() || isBufferMode();
         for (Setting setting : normalSettings) {
             setting.setVisible(!watchDog, this);
         }
@@ -117,13 +120,15 @@ public class KeepSprint extends Module {
         return (int) mode.getInput() == 2;
     }
 
+    public boolean isBufferMode() { return (int) mode.getInput() == 3; }
+
     public boolean isWatchDogMode() {
         return isWatchDog();
     }
 
     public boolean shouldKeepSprint() {
         if (mc.thePlayer == null) return false;
-        return isWatchDog();
+        return isWatchDog() || isBufferMode();
     }
 
     public boolean isAttackNoSlow() {
@@ -131,10 +136,16 @@ public class KeepSprint extends Module {
     }
 
     public double getSlowFactor() {
-        return isWatchDog() ? 1.0D : 0.6D;
+        return isWatchDog() || isBufferMode() ? 1.0D : 0.6D;
     }
 
     public static void keepSprint(Entity en) {
+        if (ModuleManager.keepSprint != null && ModuleManager.keepSprint.isBufferMode()) {
+            mc.thePlayer.motionX *= 0.6D;
+            mc.thePlayer.motionZ *= 0.6D;
+            mc.thePlayer.setSprinting(false);
+            return;
+        }
         if (ModuleManager.keepSprint != null && ModuleManager.keepSprint.isWatchDog()) {
             KeepSprint keepSprint = ModuleManager.keepSprint;
             double factor = keepSprint.getSlowFactor();

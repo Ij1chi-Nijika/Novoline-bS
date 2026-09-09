@@ -250,9 +250,9 @@ public class SimulatedPlayer {
         pushOutOfBlocks(posX + width * 0.35, getEntityBoundingBox().minY + 0.5, posZ - width * 0.35);
         pushOutOfBlocks(posX + width * 0.35, getEntityBoundingBox().minY + 0.5, posZ + width * 0.35);
 
-        boolean useItemBlocksSprint = ModuleManager.noSlow == null || !ModuleManager.noSlow.isEnabled() || NoSlow.slowed.getInput() == 80;
-        if (player.isUsingItem() && ridingEntity == null) {
-            float slowed = NoSlow.getSlowed();
+        boolean useItemBlocksSprint = !NoSlow.isActive();
+        if (player.isUsingItem() && useItemBlocksSprint && ridingEntity == null) {
+            float slowed = 0.2F;
             movementInput.moveStrafe *= slowed;
             movementInput.moveForward *= slowed;
         }
@@ -282,6 +282,12 @@ public class SimulatedPlayer {
                 || isCollidedHorizontally
                 || (foodLevel <= 6 && !capabilities.allowFlying))) {
             setSprinting(false);
+        }
+
+        if (NoSlow.isActive()) {
+            movementInput.moveForward *= NoSlow.getSlowed();
+            movementInput.moveStrafe *= NoSlow.getSlowed();
+            if (ModuleManager.noSlow != null && !ModuleManager.noSlow.canSprint()) setSprinting(false);
         }
 
         if (capabilities.allowFlying) {
