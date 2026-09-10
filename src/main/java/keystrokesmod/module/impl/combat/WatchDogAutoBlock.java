@@ -6,6 +6,10 @@ import keystrokesmod.module.setting.impl.ButtonSetting;
 import keystrokesmod.module.setting.impl.GroupSetting;
 import keystrokesmod.module.setting.impl.SliderSetting;
 import keystrokesmod.utility.Utils;
+import keystrokesmod.utility.FluxHypixelCycle;
+import keystrokesmod.module.ModuleManager;
+import org.lwjgl.input.Mouse;
+import net.minecraft.network.play.server.S19PacketEntityStatus;
 import net.minecraft.client.Minecraft;
 import net.minecraft.entity.Entity;
 import net.minecraft.network.PacketBuffer;
@@ -26,11 +30,23 @@ final class WatchDogAutoBlock {
     private boolean swapped, postBlock, postBlink, postBlinkReset, postSwap;
     private boolean predictBlocking, isBlocking, fakeBlockState;
     private boolean swap, blocked, skipAttack;
+    private final FluxHypixelCycle fluxCycle = new FluxHypixelCycle();
+    private final SliderSetting fluxAps, fluxSmartChance, fluxSmartTicks;
+    private final ButtonSetting fluxManualLeftClick, fluxVisualBlocking, fluxSmartUnblock;
+    private int fluxUnblockRemaining;
+    private boolean fluxActive;
 
     WatchDogAutoBlock(KillAura owner, GroupSetting group) {
         this.owner = owner;
         owner.registerSetting(watchDogMode = new SliderSetting(group, "WatchDogMode", 0,
-                new String[]{"OldHypixel", "Without NoSlow", "Custom", "Lag", "Predict"}));
+                new String[]{"OldHypixel", "Without NoSlow", "Custom", "Lag", "Predict", "Flux Hypixel"}));
+        owner.registerSetting(fluxAps = new SliderSetting(group, "APS Mode", 0,
+                new String[]{"3 APS", "5 APS", "7 APS", "10 APS", "14 APS"}));
+        owner.registerSetting(fluxManualLeftClick = new ButtonSetting(group, "Manual Left Click", false));
+        owner.registerSetting(fluxVisualBlocking = new ButtonSetting(group, "Visual Blocking", true));
+        owner.registerSetting(fluxSmartUnblock = new ButtonSetting(group, "Smart Unblock", false));
+        owner.registerSetting(fluxSmartChance = new SliderSetting(group, "Smart Unblock Chance", 100, 0, 100, 1));
+        owner.registerSetting(fluxSmartTicks = new SliderSetting(group, "Smart Unblock Ticks", 8, 0, 15, 1));
         owner.registerSetting(lagMode = new SliderSetting(group, "LagMode", 1,
                 new String[]{"2Tick", "3Tick", "4Tick", "3Tick + 2Tick", "5Tick", "6Tick", "3TickFull", "4TickFull", "Swap", "TestPostSwap"}));
         owner.registerSetting(noStop = new ButtonSetting(group, "NoSwap", true));
@@ -57,6 +73,12 @@ final class WatchDogAutoBlock {
         int mode = (int) watchDogMode.getInput();
         int lag = (int) lagMode.getInput();
         watchDogMode.setVisible(visible, owner);
+        fluxAps.setVisible(visible && mode == 5, owner);
+        fluxManualLeftClick.setVisible(visible && mode == 5, owner);
+        fluxVisualBlocking.setVisible(visible && mode == 5, owner);
+        fluxSmartUnblock.setVisible(visible && mode == 5, owner);
+        fluxSmartChance.setVisible(visible && mode == 5 && fluxSmartUnblock.isToggled(), owner);
+        fluxSmartTicks.setVisible(visible && mode == 5 && fluxSmartUnblock.isToggled(), owner);
         lagMode.setVisible(visible && mode == 3, owner);
         noStop.setVisible(visible && mode == 0, owner);
         test.setVisible(visible && mode == 0, owner);
@@ -74,6 +96,11 @@ final class WatchDogAutoBlock {
     }
 
     void pre() {
+        if (isFluxHypixel()) {
+            preFluxHypixel();
+            return;
+        }
+        if (fluxActive) resetFluxHypixel();
         boolean attack = true;
         swap = blocked = skipAttack = false;
         if (predictBlocking) holdTicks++;
@@ -817,6 +844,54 @@ final class WatchDogAutoBlock {
         skipAttack = !attack;
     }
 
+    boolean velocityCanReduce(int phase) {
+        if (mode() == 2) return keystrokesmod.utility.FluxCombatRules.customReduce(
+                phase, blockTick, (int) maxTick.getInput(), (int) attackTick.getInput());
+        if (mode() == 3) return keystrokesmod.utility.FluxCombatRules.lagReduce((int) lagMode.getInput(), phase, blockTick);
+        return true;
+    }
+
+    boolean isFluxHypixel() { return mode() == 5; }
+
+    private void preFluxHypixel() {
+        fluxActive = true;
+        swap = blocked = false;
+        owner.releaseAutoBlockBlink();
+        isBlocking = true;
+        fakeBlockState = fluxVisualBlocking.isToggled();
+        if (fluxUnblockRemaining > 0) {
+            owner.stopFluxHypixelBlock();
+            fluxCycle.reset();
+            skipAttack = true;
+            return;
+        }
+        int aps = new int[]{3, 5, 7, 10, 14}[(int) fluxAps.getInput()];
+        boolean attackStage = fluxCycle.advance(aps, isPlayerBlocking(), owner::stopFluxHypixelBlock);
+        skipAttack = !attackStage || fluxManualLeftClick.isToggled() && !Mouse.isButtonDown(0);
+        if (!skipAttack && KillAura.target != null && owner.watchDogDistance(KillAura.target) <= 3.5D
+                && ModuleManager.keepSprint != null) {
+            ModuleManager.keepSprint.preparePredictionAutoBlock();
+        }
+    }
+
+    void tickFluxHypixel() {
+        if (fluxUnblockRemaining > 0) fluxUnblockRemaining--;
+    }
+
+    void onFluxDamage(S19PacketEntityStatus packet) {
+        if (!isFluxHypixel() || !fluxSmartUnblock.isToggled() || !Utils.nullCheck()
+                || packet.getOpCode() != 2 || packet.getEntity(mc.theWorld) != mc.thePlayer) return;
+        if (java.util.concurrent.ThreadLocalRandom.current().nextDouble(100) < fluxSmartChance.getInput()) {
+            fluxUnblockRemaining = (int) fluxSmartTicks.getInput();
+        }
+    }
+
+    private void resetFluxHypixel() {
+        fluxCycle.reset();
+        fluxUnblockRemaining = 0;
+        fluxActive = false;
+    }
+
     boolean skipAttack() {
         return skipAttack || isPlayerBlocking() || owner.watchDogPlayerBusy();
     }
@@ -840,6 +915,10 @@ final class WatchDogAutoBlock {
     int blockTick() { return blockTick; }
 
     void finish(Entity attackedTarget) {
+        if (isFluxHypixel()) {
+            if (attackedTarget != null && fluxCycle.onAttack()) owner.startAutoBlock(mc.thePlayer.getHeldItem());
+            return;
+        }
         if (swap) {
             if (attackedTarget != null) owner.sendWatchDogInteraction(attackedTarget);
             else if (!postBlock) owner.startAutoBlock(mc.thePlayer.getHeldItem());
@@ -888,6 +967,10 @@ final class WatchDogAutoBlock {
     int mode() { return (int) watchDogMode.getInput(); }
 
     void noBlock() {
+        if (fluxActive) {
+            if (Utils.nullCheck()) owner.stopFluxHypixelBlock();
+            resetFluxHypixel();
+        }
         owner.releaseAutoBlockBlink();
         if (mode() == 0 && isBlocking && owner.watchDogNoSlowEnabled()) {
             isBlocking = false;
@@ -908,11 +991,14 @@ final class WatchDogAutoBlock {
     }
 
     void enable() {
+        resetFluxHypixel();
         blockTick = 0;
         predictBlocking = false;
     }
 
     void reset() {
+        if (fluxActive && Utils.nullCheck()) owner.stopFluxHypixelBlock();
+        resetFluxHypixel();
         owner.releaseAutoBlockBlink();
         Velocity.extraAttacked = false;
         fakeBlockState = false;

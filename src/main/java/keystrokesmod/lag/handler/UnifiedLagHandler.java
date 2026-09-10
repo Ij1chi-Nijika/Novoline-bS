@@ -67,6 +67,12 @@ public final class UnifiedLagHandler extends AbstractFastTrackProvider {
             return;
         }
 
+        if (keystrokesmod.module.ModuleManager.velocity != null
+                && keystrokesmod.module.ModuleManager.velocity.bufferOutboundPacket(packet)) {
+            event.setCanceled(true);
+            return;
+        }
+
         if (queue.tick(packet, EnumLagDirection.OUTBOUND)) {
             event.setCanceled(true);
             return;

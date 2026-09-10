@@ -1,460 +1,511 @@
 package keystrokesmod.module.impl.movement;
 
 import keystrokesmod.event.AttackEvent;
-import keystrokesmod.event.PreAttackEvent;
-import keystrokesmod.event.PrePlayerInteractEvent;
+import keystrokesmod.event.DispatchPacketEvent;
+import keystrokesmod.event.ReceivePacketEvent;
+import keystrokesmod.utility.KeepSprintTrace;
+import keystrokesmod.module.setting.Setting;
+import net.minecraft.network.play.client.C03PacketPlayer;
+import net.minecraft.network.play.client.C0BPacketEntityAction;
+import net.minecraft.network.play.client.C07PacketPlayerDigging;
+import net.minecraft.network.play.client.C08PacketPlayerBlockPlacement;
+import net.minecraft.network.play.client.C09PacketHeldItemChange;
+import net.minecraft.network.play.server.S08PacketPlayerPosLook;
+import net.minecraft.network.play.server.S12PacketEntityVelocity;
+import java.util.Locale;
+import keystrokesmod.event.GameTickEvent;
+import keystrokesmod.event.LeaderUpdateEvent;
+import keystrokesmod.event.LivingUpdateEvent;
+import keystrokesmod.event.SendPacketEvent;
 import keystrokesmod.module.Module;
 import keystrokesmod.module.ModuleManager;
 import keystrokesmod.module.impl.combat.KillAura;
-import keystrokesmod.module.setting.Setting;
 import keystrokesmod.module.setting.impl.ButtonSetting;
-import keystrokesmod.module.setting.impl.DescriptionSetting;
 import keystrokesmod.module.setting.impl.SliderSetting;
-import keystrokesmod.utility.CombatTargeting;
-import keystrokesmod.utility.Utils;
+import keystrokesmod.utility.PacketUtils;
+import net.minecraft.client.settings.KeyBinding;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.player.EntityPlayer;
+import net.minecraft.network.Packet;
+import net.minecraft.network.play.client.C02PacketUseEntity;
+import net.minecraft.network.play.client.C0APacketAnimation;
 import net.minecraft.util.MovingObjectPosition;
-import net.minecraft.util.Vec3;
+import net.minecraftforge.event.world.WorldEvent;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
+import org.lwjgl.input.Keyboard;
+import org.lwjgl.input.Mouse;
+import java.util.Deque;
+import java.util.concurrent.ConcurrentLinkedDeque;
 
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.Map;
-
+/** Flux KeepSprint, adapted to Raven's Minecraft 1.8.9 event and packet APIs. */
 public class KeepSprint extends Module {
-    private static final String[] MODES = {"Normal", "Smart", "WatchDog", "Buffer"};
-    private static final double HIT_RANGE_SQ = 9.0D;
-    private static final int HURT_WINDOW_TICKS = 10;
-    private static final int SERVER_CONFIRM_COOLDOWN_TICKS = HURT_WINDOW_TICKS;
-    private static final int SERVER_CONFIRM_TIMEOUT_TICKS = 30;
-    private static final int BLOCK_WAIT_FIRST = 1;
-    private static final int BLOCK_SERVER_COOLDOWN = 1 << 3;
-    private static final int BLOCK_PREDICTED_BURST = 1 << 4;
+    private static final String[] MODES = {"Vanilla", "Prediction", "Legit", "Grim", "Buffer", "Packet"};
+    private final SliderSetting mode = new SliderSetting("Mode", 4, MODES);
+    private final ButtonSetting onHurt = new ButtonSetting("On Hurt", false);
+    private final SliderSetting slowdown = new SliderSetting("Slowdown", 0, 0, 100, 1);
+    private final ButtonSetting groundOnly = new ButtonSetting("Ground Only", false);
+    private final ButtonSetting reachOnly = new ButtonSetting("Reach Only", false);
+    private final ButtonSetting autoFactor = new ButtonSetting("Auto Factor", true);
+    private final SliderSetting offsetBudget = new SliderSetting("Offset Budget", 50, 0, 100, 1);
+    private final SliderSetting factor = new SliderSetting("Factor", 65, 0, 100, 1);
+    private final ButtonSetting grimGroundOnly = new ButtonSetting("Grim Ground Only", true);
+    private final SliderSetting bufferSlowdown = new SliderSetting("Buffer Slowdown", 100, 0, 100, 1);
+    private final SliderSetting bufferMaxTicks = new SliderSetting("Buffer Max Ticks", 4, 1, 10, 1);
+    private final ButtonSetting bufferGroundOnly = new ButtonSetting("Buffer Ground Only", true);
 
-    public static SliderSetting slow;
-    public static ButtonSetting stopSprint;
-    public static ButtonSetting disableWhileJump;
-    public static ButtonSetting reduceReachHits;
+    private final ButtonSetting debugTrace = new ButtonSetting("Debug Trace", false);
+    private final KeepSprintTrace trace = new KeepSprintTrace();
+    private boolean tracing;
 
-    private final SliderSetting mode;
-    public final ButtonSetting bufferOnHurt;
-    private final DescriptionSetting normalDescription;
-    private final DescriptionSetting smartDescription;
-    private final SliderSetting pauseDuration;
-    private final SliderSetting waitForFirstHit;
-    private final ButtonSetting disableDuringKnockback;
-    private final ButtonSetting useServerAttackTime;
-    private final ButtonSetting fakeSwing;
-    private final SliderSetting inCombatCancelRate;
-    private final SliderSetting missedSwingsCancelRate;
-    private final Setting[] normalSettings;
-    private final Setting[] smartSettings;
+    private int disSprintTicks = 0;
+    private final Deque<Packet<?>> pendingSwing = new ConcurrentLinkedDeque<>();
+    private final Deque<BufferedAttack> bufferedAttacks = new ConcurrentLinkedDeque<>();
+    private int swingTicks = 0;
+    private Entity lastAttackTarget = null;
 
-    private EntityPlayer currentTarget;
-    private final Map<Integer, TargetState> targetStates = new HashMap<>();
-    private int lastSelfHurtTime;
-    private boolean takingKnockback;
-    private boolean waitFirstTracking;
-    private int waitFirstStartTick = -1;
-    private boolean waitFirstUnlocked;
-    private boolean smartStateActive;
-    private int tickCounter;
-    private Entity lastAttackTarget;
+    private PredictionState predictionState = PredictionState.IDLE;
+    private int predictionTicks = 0;
+    private boolean predictionAttackHandled = false;
 
     public KeepSprint() {
         super("Keep Sprint", Module.category.movement, 0);
-        this.registerSetting(mode = new SliderSetting("Mode", 0, MODES));
-        registerSetting(bufferOnHurt = new ButtonSetting("OnHurt", false));
-        this.registerSetting(normalDescription = new DescriptionSetting("Default is 40% motion reduction."));
-        this.registerSetting(slow = new SliderSetting("Slow %", 40.0D, 0.0D, 40.0D, 1.0D));
-        this.registerSetting(stopSprint = new ButtonSetting("Stop Sprint", true));
-        this.registerSetting(disableWhileJump = new ButtonSetting("Disable while jumping", false));
-        this.registerSetting(reduceReachHits = new ButtonSetting("Only reduce reach hits", false));
-
-        this.registerSetting(smartDescription = new DescriptionSetting("Smart hit selection"));
-        this.registerSetting(pauseDuration = new SliderSetting("Pause duration", "ms", 500.0D, 0.0D, 500.0D, 50.0D));
-        this.registerSetting(waitForFirstHit = new SliderSetting("Wait for first hit", "ms", 0.0D, 0.0D, 500.0D, 50.0D));
-        this.registerSetting(disableDuringKnockback = new ButtonSetting("Disable during knockback", false));
-        this.registerSetting(useServerAttackTime = new ButtonSetting("Use server attack time", false));
-        this.registerSetting(fakeSwing = new ButtonSetting("Fake swing", false));
-        this.registerSetting(inCombatCancelRate = new SliderSetting("In combat cancel rate", "%", 100.0D, 0.0D, 100.0D, 1.0D));
-        this.registerSetting(missedSwingsCancelRate = new SliderSetting("Missed swings cancel rate", "%", 0.0D, 0.0D, 100.0D, 1.0D));
-        normalSettings = new Setting[]{normalDescription, slow, stopSprint, disableWhileJump, reduceReachHits};
-        smartSettings = new Setting[]{smartDescription, pauseDuration, waitForFirstHit, disableDuringKnockback,
-                useServerAttackTime, fakeSwing, inCombatCancelRate, missedSwingsCancelRate};
+        registerSetting(mode);
+        registerSetting(onHurt);
+        registerSetting(slowdown);
+        registerSetting(groundOnly);
+        registerSetting(reachOnly);
+        registerSetting(autoFactor);
+        registerSetting(offsetBudget);
+        registerSetting(factor);
+        registerSetting(grimGroundOnly);
+        registerSetting(bufferSlowdown);
+        registerSetting(bufferMaxTicks);
+        registerSetting(bufferGroundOnly);
+        registerSetting(debugTrace);
     }
 
-    @Override
-    public void guiUpdate() {
-        bufferOnHurt.setVisible(isBufferMode(), this);
-        boolean watchDog = isWatchDog() || isBufferMode();
-        for (Setting setting : normalSettings) {
-            setting.setVisible(!watchDog, this);
-        }
-        for (Setting setting : smartSettings) {
-            setting.setVisible(isSmart(), this);
+    private enum PredictionState {
+        IDLE,
+        WAITING,
+        RESTORE
+    }
+
+    private static class BufferedAttack {
+        final Packet<?> swing;
+        final Packet<?> attack;
+        final Entity target;
+        int ticks;
+
+        BufferedAttack(Packet<?> swing, Packet<?> attack, Entity target) {
+            this.swing = swing;
+            this.attack = attack;
+            this.target = target;
         }
     }
 
     @Override
     public void onEnable() {
-        tickCounter = 0;
-        smartStateActive = isSmart();
-        resetSmartState();
+        trace.clear();
+        tracing = false;
+        disSprintTicks = 0;
+        resetPrediction();
+        pendingSwing.clear();
+        bufferedAttacks.clear();
+        swingTicks = 0;
         lastAttackTarget = null;
     }
 
     @Override
     public void onDisable() {
-        smartStateActive = false;
-        resetSmartState();
+        trace.clear();
+        tracing = false;
+        resetPrediction();
+        if (mc.thePlayer == null || mc.theWorld == null) {
+            clearBuffer();
+            return;
+        }
+        while (!pendingSwing.isEmpty()) {
+            PacketUtils.sendPacketNoEvent(pendingSwing.poll());
+        }
+        while (!bufferedAttacks.isEmpty()) {
+            BufferedAttack attack = bufferedAttacks.poll();
+            PacketUtils.sendPacketNoEvent(attack.swing);
+            PacketUtils.sendPacketNoEvent(attack.attack);
+        }
+        swingTicks = 0;
         lastAttackTarget = null;
-    }
 
-    private boolean isSmart() {
-        return (int) mode.getInput() == 1;
-    }
-
-    private boolean isWatchDog() {
-        return (int) mode.getInput() == 2;
-    }
-
-    public boolean isBufferMode() { return (int) mode.getInput() == 3; }
-
-    public boolean isWatchDogMode() {
-        return isWatchDog();
+        if (isMode("Legit") && mc.thePlayer != null) {
+            KeyBinding.setKeyBindState(mc.gameSettings.keyBindSprint.getKeyCode(), isPhysicallyDown(mc.gameSettings.keyBindSprint));
+        }
     }
 
     public boolean shouldKeepSprint() {
         if (mc.thePlayer == null) return false;
-        return isWatchDog() || isBufferMode();
+
+        switch (getInfo()) {
+            case "Prediction": return predictionState == PredictionState.RESTORE && (int) slowdown.getInput() != 60;
+            case "Legit": return false;
+            case "Grim": return !grimGroundOnly.isToggled() || mc.thePlayer.onGround;
+            case "Buffer": return !bufferGroundOnly.isToggled() || mc.thePlayer.onGround;
+            case "Packet": return true;
+            default:
+                if (groundOnly.isToggled() && !mc.thePlayer.onGround) return false;
+                if (!reachOnly.isToggled()) return true;
+                MovingObjectPosition hit = mc.objectMouseOver;
+                return hit != null && hit.hitVec != null
+                        && hit.hitVec.distanceTo(mc.thePlayer.getPositionEyes(1.0F)) > 3.0;
+        }
     }
 
     public boolean isAttackNoSlow() {
-        return isEnabled() && shouldKeepSprint();
+        return isEnabled() && (shouldKeepSprint() || isMode("Buffer"));
+    }
+
+    public boolean isPacketMode() {
+        return isMode("Packet");
     }
 
     public double getSlowFactor() {
-        return isWatchDog() || isBufferMode() ? 1.0D : 0.6D;
+        if (ModuleManager.velocity != null && ModuleManager.velocity.isKeepSprintBlinkActive()) return 1.0;
+        switch (getInfo()) {
+            case "Prediction": return predictionState == PredictionState.RESTORE ? getConfiguredSlowFactor() : 0.6;
+            case "Legit": return 0.6;
+            case "Grim": return getGrimFactor();
+            case "Buffer": return bufferGroundOnly.isToggled() && mc.thePlayer != null && !mc.thePlayer.onGround ? 0.6 : 1.0;
+            case "Packet": return 1.0;
+            default: return getConfiguredSlowFactor();
+        }
     }
 
-    public static void keepSprint(Entity en) {
-        if (ModuleManager.keepSprint != null && ModuleManager.keepSprint.isBufferMode()) {
-            mc.thePlayer.motionX *= 0.6D;
-            mc.thePlayer.motionZ *= 0.6D;
-            mc.thePlayer.setSprinting(false);
-            return;
-        }
-        if (ModuleManager.keepSprint != null && ModuleManager.keepSprint.isWatchDog()) {
-            KeepSprint keepSprint = ModuleManager.keepSprint;
-            double factor = keepSprint.getSlowFactor();
-            mc.thePlayer.motionX = mc.thePlayer.motionX / 0.6D * factor;
-            mc.thePlayer.motionZ = mc.thePlayer.motionZ / 0.6D * factor;
-            if (keepSprint.shouldKeepSprint()) {
-                mc.thePlayer.setSprinting(true);
-            }
-            return;
-        }
-        boolean vanilla = false;
-        if (disableWhileJump.isToggled() && !mc.thePlayer.onGround) {
-            vanilla = true;
-        }
-        else if (reduceReachHits.isToggled() && !mc.thePlayer.capabilities.isCreativeMode) {
-            double distance = -1.0;
-            final Vec3 getPositionEyes = mc.thePlayer.getPositionEyes(1.0f);
-            if (ModuleManager.killAura != null && ModuleManager.killAura.isEnabled() && KillAura.target != null) {
-                distance = getPositionEyes.distanceTo(KillAura.target.getPositionEyes(1.0f));
-            }
-            else if (ModuleManager.reach != null && ModuleManager.reach.isEnabled() && mc.objectMouseOver != null) {
-                distance = getPositionEyes.distanceTo(mc.objectMouseOver.hitVec);
-            }
-            if (distance != -1.0 && distance <= 3.0) {
-                vanilla = true;
-            }
-        }
-        if (vanilla) {
-            mc.thePlayer.motionX *= 0.6;
-            mc.thePlayer.motionZ *= 0.6;
-        }
-        else {
-            float mult = (100.0f - (float) slow.getInput()) / 100.0f;
-            mc.thePlayer.motionX *= mult;
-            mc.thePlayer.motionZ *= mult;
-        }
+    private double getConfiguredSlowFactor() {
+        return 1.0 - 0.4 * slowdown.getInput() / 100.0;
+    }
 
-        if (stopSprint.isToggled()) {
-            mc.thePlayer.motionX *= 0.5;
-        }
+    private double getGrimFactor() {
+        if (mc.thePlayer == null) return 1.0;
+        if (!autoFactor.isToggled()) return factor.getInput() / 100.0;
+
+        double speed = Math.hypot(mc.thePlayer.motionX, mc.thePlayer.motionZ);
+        if (speed <= 0.0) return 1.0;
+
+        double budget = 0.001 * offsetBudget.getInput() / 100.0;
+        double maxFactor = speed * 0.6 < 0.005 ? budget / speed : 0.6 + budget / speed;
+        return Math.min(1.0, maxFactor);
     }
 
     @SubscribeEvent
     public void onAttack(AttackEvent event) {
         lastAttackTarget = event.target;
+        if (debugTrace.isToggled()) trace.record("AttackEvent target="
+                + (event.target == null ? -1 : event.target.getEntityId()) + " " + tracePlayerState());
 
-        if (isWatchDog()) {
+        if (isMode("Prediction")) {
+            handlePredictionAttack(event);
+            return;
+        }
+
+        if (isMode("Legit")) {
+            disSprintTicks = 3;
+        }
+
+        if (isMode("Packet")) {
             mc.thePlayer.swingItem();
         }
     }
 
+    private void handlePredictionAttack(AttackEvent event) {
+        if (mc.thePlayer == null || predictionAttackHandled) return;
+
+        if (event.target instanceof EntityPlayer) {
+            switch (predictionState) {
+                case IDLE: {
+                    predictionState = mc.thePlayer.isSprinting()
+                            ? PredictionState.WAITING
+                            : PredictionState.RESTORE;
+                    predictionTicks = 0;
+                    break;
+                }
+                case WAITING: {
+                    mc.thePlayer.setSprinting(false);
+                    predictionTicks = 0;
+                    predictionState = PredictionState.RESTORE;
+                    break;
+                }
+                case RESTORE: {
+                }
+            }
+        }
+
+        predictionAttackHandled = true;
+    }
+
+    @SubscribeEvent
+    public void onPlayerUpdate(LeaderUpdateEvent event) {
+        if (event.post) return;
+
+        if (mc.thePlayer == null) {
+            resetPrediction();
+            return;
+        }
+
+        if (isMode("Prediction")) {
+            updatePrediction();
+            return;
+        }
+
+        resetPrediction();
+        if (!isMode("Legit") || disSprintTicks < 0) return;
+
+        if (onHurt.isToggled() || mc.thePlayer.hurtTime == 0) {
+            KeyBinding.setKeyBindState(mc.gameSettings.keyBindSprint.getKeyCode(), false);
+            mc.thePlayer.setSprinting(false);
+        }
+        disSprintTicks--;
+    }
+
+    private void updatePrediction() {
+        if (predictionTicks > 5) {
+            resetPrediction();
+            return;
+        }
+
+        switch (predictionState) {
+            case WAITING: {
+                mc.thePlayer.setSprinting(false);
+                predictionTicks++;
+                break;
+            }
+            case RESTORE: {
+                resumePredictionSprint();
+                resetPrediction();
+                break;
+            }
+            case IDLE: {
+            }
+        }
+    }
+
+    @SubscribeEvent
+    public void onLivingUpdate(LivingUpdateEvent event) {
+        if (mc.thePlayer == null || !isMode("Prediction")) return;
+
+        switch (predictionState) {
+            case WAITING: mc.thePlayer.setSprinting(false); break;
+            case RESTORE: resumePredictionSprint(); break;
+            case IDLE: {
+            }
+        }
+    }
+
+    private void resumePredictionSprint() {
+        if (!mc.thePlayer.isUsingItem()) {
+            mc.thePlayer.setSprinting(true);
+            return;
+        }
+
+        Sprint sprint = ModuleManager.sprint;
+        if (sprint != null && sprint.isEnabled()) {
+            mc.thePlayer.setSprinting(true);
+        }
+    }
+
+    public void preparePredictionAutoBlock() {
+        if (!isEnabled() || !isMode("Prediction") || mc.thePlayer == null) return;
+
+        predictionState = PredictionState.WAITING;
+        predictionTicks = 0;
+        predictionAttackHandled = false;
+    }
+
+    private void resetPrediction() {
+        predictionState = PredictionState.IDLE;
+        predictionTicks = 0;
+        predictionAttackHandled = false;
+    }
+
+    @SubscribeEvent
+    public void onWorld(WorldEvent.Unload event) {
+        if (event.world != mc.theWorld) return;
+        clearBuffer();
+        resetPrediction();
+        trace.clear();
+    }
+
+    @SubscribeEvent
+    public void onPacket(SendPacketEvent event) {
+        if (!isEnabled() || !isMode("Buffer")) return;
+        if (mc.thePlayer == null || (bufferGroundOnly.isToggled() && !mc.thePlayer.onGround)) return;
+
+        if (event.getPacket() instanceof C0APacketAnimation) {
+            event.setCanceled(true);
+            pendingSwing.offer(event.getPacket());
+        } else if (event.getPacket() instanceof C02PacketUseEntity) {
+            if (lastAttackTarget == null || pendingSwing.isEmpty()) {
+                return;
+            }
+            event.setCanceled(true);
+            bufferedAttacks.offer(new BufferedAttack(pendingSwing.poll(), event.getPacket(), lastAttackTarget));
+            lastAttackTarget = null;
+        }
+    }
+
+    @SubscribeEvent
+    public void onTick(GameTickEvent event) {
+        if (debugTrace.isToggled() && mc.thePlayer != null) {
+            if (!tracing) trace.clear();
+            tracing = true;
+            trace.configuration(traceConfiguration());
+            trace.record("tick " + tracePlayerState());
+        } else if (tracing) {
+            trace.clear();
+            tracing = false;
+        }
+        predictionAttackHandled = false;
+
+        if (!isEnabled() || !isMode("Buffer") || mc.thePlayer == null) return;
+
+        if (bufferedAttacks.isEmpty()) {
+            if (!pendingSwing.isEmpty()) {
+                if (++swingTicks > 2) {
+                    swingTicks = 0;
+                    while (!pendingSwing.isEmpty()) {
+                        PacketUtils.sendPacketNoEvent(pendingSwing.poll());
+                    }
+                }
+            } else {
+                swingTicks = 0;
+            }
+            return;
+        }
+
+        BufferedAttack attack = bufferedAttacks.peek();
+        attack.ticks++;
+        if (attack.ticks > (int) bufferMaxTicks.getInput()) {
+            bufferedAttacks.poll();
+            return;
+        }
+        if (attack.target == null || !attack.target.isEntityAlive()) {
+            bufferedAttacks.poll();
+            return;
+        }
+
+        KillAura aura = ModuleManager.killAura;
+        boolean auraAiming = aura != null && aura.isEnabled()
+                && KillAura.target == attack.target;
+        if (!auraAiming) {
+            if (mc.objectMouseOver == null || mc.objectMouseOver.entityHit != attack.target) {
+                return;
+            }
+        }
+
+        if (aura != null && aura.isEnabled() && aura.isKeepSprintBlocking()) {
+            return;
+        }
+
+        double factor = 0.6 + 0.4 * (1.0 - bufferSlowdown.getInput() / 100.0);
+        mc.thePlayer.motionX *= factor;
+        mc.thePlayer.motionZ *= factor;
+
+        PacketUtils.sendPacketNoEvent(attack.swing);
+        PacketUtils.sendPacketNoEvent(attack.attack);
+        bufferedAttacks.poll();
+    }
+
+    /** Called at the actual slowdown branch, not merely on an attack click. */
+    public void traceAttackSlowdown(String phase) {
+        if (debugTrace.isToggled()) trace.record("slowdown " + phase + " " + tracePlayerState());
+    }
+
+    @SubscribeEvent
+    public void onTraceDispatch(DispatchPacketEvent event) {
+        if (!debugTrace.isToggled() || mc.thePlayer == null) return;
+        Packet<?> packet = event.getPacket();
+        String detail;
+        if (packet instanceof C02PacketUseEntity) detail = "attack/interact " + ((C02PacketUseEntity) packet).getAction();
+        else if (packet instanceof C0APacketAnimation) detail = "swing";
+        else if (packet instanceof C0BPacketEntityAction) detail = "sprint/sneak " + ((C0BPacketEntityAction) packet).getAction();
+        else if (packet instanceof C03PacketPlayer) {
+            C03PacketPlayer movement = (C03PacketPlayer) packet;
+            detail = String.format(Locale.ROOT, "move position=%s x=%.5f y=%.5f z=%.5f ground=%s",
+                    movement.isMoving(), movement.getPositionX(), movement.getPositionY(), movement.getPositionZ(), movement.isOnGround());
+        } else if (packet instanceof C07PacketPlayerDigging) detail = "dig/release " + ((C07PacketPlayerDigging) packet).getStatus();
+        else if (packet instanceof C08PacketPlayerBlockPlacement) detail = "use/block";
+        else if (packet instanceof C09PacketHeldItemChange) detail = "slot " + ((C09PacketHeldItemChange) packet).getSlotId();
+        else return;
+        trace.record("SEND " + detail + " " + tracePlayerState());
+    }
+
+    @SubscribeEvent
+    public void onTraceReceive(ReceivePacketEvent event) {
+        if (!debugTrace.isToggled() || mc.thePlayer == null) return;
+        if (event.getPacket() instanceof S08PacketPlayerPosLook) {
+            S08PacketPlayerPosLook correction = (S08PacketPlayerPosLook) event.getPacket();
+            trace.correction(String.format(Locale.ROOT, "S08 x=%.5f y=%.5f z=%.5f flags=%s %s",
+                    correction.getX(), correction.getY(), correction.getZ(), correction.func_179834_f(), tracePlayerState()));
+        } else if (event.getPacket() instanceof S12PacketEntityVelocity) {
+            S12PacketEntityVelocity velocity = (S12PacketEntityVelocity) event.getPacket();
+            if (velocity.getEntityID() == mc.thePlayer.getEntityId()) trace.record("RECV velocity "
+                    + velocity.getMotionX() + "," + velocity.getMotionY() + "," + velocity.getMotionZ());
+        }
+    }
+
+    private String tracePlayerState() {
+        if (mc.thePlayer == null) return "no-player";
+        return String.format(Locale.ROOT, "tick=%d sprint=%s ground=%s hurt=%d using=%s motion=%.6f,%.6f,%.6f",
+                mc.thePlayer.ticksExisted, mc.thePlayer.isSprinting(), mc.thePlayer.onGround, mc.thePlayer.hurtTime,
+                mc.thePlayer.isUsingItem(), mc.thePlayer.motionX, mc.thePlayer.motionY, mc.thePlayer.motionZ);
+    }
+
+    private String traceConfiguration() {
+        StringBuilder out = new StringBuilder("FluxChain=2 KeepSprint=").append(getInfo());
+        for (Module module : new Module[]{ModuleManager.killAura, ModuleManager.velocity, ModuleManager.sprint,
+                ModuleManager.noSlow, ModuleManager.wTap}) {
+            if (module == null) continue;
+            out.append(" | ").append(module.getName()).append(" enabled=").append(module.isEnabled());
+            if (!module.isEnabled()) continue;
+            for (Setting setting : module.getSettings()) {
+                if (setting instanceof SliderSetting) out.append(" ").append(setting.getProfileKey()).append("=").append(((SliderSetting) setting).getInput());
+                else if (setting instanceof ButtonSetting) out.append(" ").append(setting.getProfileKey()).append("=").append(((ButtonSetting) setting).isToggled());
+            }
+        }
+        return out.toString();
+    }
+
+    private void clearBuffer() {
+        pendingSwing.clear();
+        bufferedAttacks.clear();
+        swingTicks = 0;
+        lastAttackTarget = null;
+    }
+
+    private boolean isPhysicallyDown(KeyBinding key) {
+        int code = key.getKeyCode();
+        return code < 0 ? code + 100 >= 0 && Mouse.isButtonDown(code + 100)
+                : code > 0 && code < Keyboard.KEYBOARD_SIZE && Keyboard.isKeyDown(code);
+    }
+
+    private boolean isMode(String name) {
+        return name.equals(getInfo());
+    }
+
     @Override
     public String getInfo() {
-        return MODES[(int) mode.getInput()];
+        return MODES[Math.max(0, Math.min(MODES.length - 1, (int) mode.getInput()))];
     }
 
-    @SubscribeEvent
-    public void onPrePlayerInteract(PrePlayerInteractEvent event) {
-        if (!isSmart()) {
-            if (smartStateActive) {
-                smartStateActive = false;
-                resetSmartState();
-            }
-            return;
-        }
-        smartStateActive = true;
-
-        if (!Utils.nullCheck() || mc.thePlayer.isDead || mc.theWorld == null) {
-            resetSmartState();
-            return;
-        }
-
-        tickCounter++;
-        int currentTick = tickCounter;
-        pruneTargetStates();
-        EntityPlayer nextTarget = CombatTargeting.findTarget(HIT_RANGE_SQ);
-        updateCurrentTarget(nextTarget, currentTick);
-        updateSelfDamage(currentTick);
-        updateTargetDamage(currentTick);
-    }
-
-    @SubscribeEvent
-    public void onPreAttack(PreAttackEvent event) {
-        if (!isSmart() || !Utils.nullCheck() || mc.theWorld == null || mc.thePlayer.isDead) {
-            return;
-        }
-
-        int currentTick = tickCounter;
-        ClickType clickType = classifyClick(event.objectMouseOver);
-        if (clickType == ClickType.BLOCK_INTERACTION) {
-            return;
-        }
-        if (clickType == ClickType.MISSED_SWING) {
-            if (shouldCancel(missedSwingsCancelRate.getInput())) cancelClick(event);
-            return;
-        }
-
-        EntityPlayer clickedTarget = CombatTargeting.asValidPlayer(
-                event.objectMouseOver == null ? null : event.objectMouseOver.entityHit, HIT_RANGE_SQ);
-        if (clickedTarget == null) return;
-
-        updateCurrentTarget(clickedTarget, currentTick);
-        TargetState state = getTargetState(clickedTarget);
-        int blockMask = 0;
-        if (!disableDuringKnockback.isToggled() || !isTakingKnockback()) {
-            blockMask = getBurstBlockMask(state, currentTick);
-            if (isWaitingForFirstHit(currentTick)) blockMask |= BLOCK_WAIT_FIRST;
-        }
-
-        boolean shouldBlock = (blockMask & BLOCK_WAIT_FIRST) != 0
-                || (blockMask & BLOCK_PREDICTED_BURST) != 0
-                || applyPauseDuration(state, blockMask & ~BLOCK_PREDICTED_BURST, currentTick);
-        if (shouldBlock && shouldCancel(inCombatCancelRate.getInput())) {
-            cancelClick(event);
-            return;
-        }
-        recordPassedValidHit(clickedTarget, currentTick);
-    }
-
-    private ClickType classifyClick(MovingObjectPosition objectMouseOver) {
-        if (objectMouseOver == null) return ClickType.MISSED_SWING;
-        if (objectMouseOver.typeOfHit == MovingObjectPosition.MovingObjectType.BLOCK) return ClickType.BLOCK_INTERACTION;
-        if (objectMouseOver.typeOfHit == MovingObjectPosition.MovingObjectType.ENTITY) {
-            return CombatTargeting.asValidPlayer(objectMouseOver.entityHit, HIT_RANGE_SQ) != null
-                    ? ClickType.VALID_HIT : ClickType.MISSED_SWING;
-        }
-        return ClickType.MISSED_SWING;
-    }
-
-    private void cancelClick(PreAttackEvent event) {
-        if (fakeSwing.isToggled()) Utils.setSwinging();
-        event.setCanceled(true);
-    }
-
-    private void updateCurrentTarget(EntityPlayer nextTarget, int currentTick) {
-        if (sameTarget(nextTarget)) {
-            if (nextTarget != null) {
-                currentTarget = nextTarget;
-                getTargetState(nextTarget);
-            }
-            return;
-        }
-        currentTarget = nextTarget;
-        if (nextTarget == null) {
-            resetWaitFirstState();
-        } else if (!waitFirstTracking) {
-            waitFirstTracking = true;
-            waitFirstStartTick = currentTick;
-            waitFirstUnlocked = false;
-        }
-        if (nextTarget != null) getTargetState(nextTarget);
-    }
-
-    private void updateSelfDamage(int currentTick) {
-        int hurtTime = mc.thePlayer.hurtTime;
-        boolean hurtAgain = hurtTime > lastSelfHurtTime;
-        if (hurtAgain) {
-            if (waitFirstTracking && !waitFirstUnlocked) waitFirstUnlocked = true;
-            takingKnockback = true;
-        }
-        if (takingKnockback && mc.thePlayer.onGround && !hurtAgain) takingKnockback = false;
-        lastSelfHurtTime = hurtTime;
-    }
-
-    private void updateTargetDamage(int currentTick) {
-        if (currentTarget == null || !useServerAttackTime.isToggled()) return;
-        TargetState state = getTargetState(currentTarget);
-        int targetHurtTime = currentTarget.hurtTime;
-        if (state.pendingServerConfirmationTick >= 0
-                && currentTick - state.pendingServerConfirmationTick > SERVER_CONFIRM_TIMEOUT_TICKS) {
-            state.pendingServerConfirmationTick = -1;
-        }
-        if (state.pendingServerConfirmationTick >= 0 && targetHurtTime > state.lastObservedTargetHurtTime) {
-            state.pendingServerConfirmationTick = -1;
-            state.lastConfirmedTargetDamageTick = currentTick;
-            state.rawBlockMask = BLOCK_SERVER_COOLDOWN;
-            state.rawBlockStartTick = currentTick;
-        }
-        state.lastObservedTargetHurtTime = targetHurtTime;
-    }
-
-    private int getBurstBlockMask(TargetState state, int currentTick) {
-        if (useServerAttackTime.isToggled()) {
-            return state.lastConfirmedTargetDamageTick >= 0
-                    && currentTick - state.lastConfirmedTargetDamageTick < SERVER_CONFIRM_COOLDOWN_TICKS
-                    ? BLOCK_SERVER_COOLDOWN : 0;
-        }
-        if (!isPredictedBurstWindowActive(state, currentTick)) return 0;
-        int pauseTicks = msToTicks(pauseDuration.getInput());
-        return pauseTicks > 0 && currentTick - state.predictedBurstWindowStartTick < pauseTicks
-                ? BLOCK_PREDICTED_BURST : 0;
-    }
-
-    private boolean isWaitingForFirstHit(int currentTick) {
-        if (waitForFirstHit.getInput() <= 0.0D || currentTarget == null || !waitFirstTracking
-                || waitFirstUnlocked || waitFirstStartTick < 0) return false;
-        int requiredTicks = msToTicks(waitForFirstHit.getInput());
-        return requiredTicks > 0 && currentTick - waitFirstStartTick < requiredTicks;
-    }
-
-    private boolean applyPauseDuration(TargetState state, int blockMask, int currentTick) {
-        if (blockMask == 0) {
-            state.rawBlockMask = 0;
-            state.rawBlockStartTick = -1;
-            return false;
-        }
-        if (pauseDuration.getInput() <= 0.0D) {
-            state.rawBlockMask = blockMask;
-            state.rawBlockStartTick = currentTick;
-            return false;
-        }
-        if (blockMask != state.rawBlockMask) {
-            state.rawBlockMask = blockMask;
-            state.rawBlockStartTick = currentTick;
-        } else if (state.rawBlockStartTick < 0) {
-            state.rawBlockStartTick = currentTick;
-        }
-        int requiredTicks = msToTicks(pauseDuration.getInput());
-        return requiredTicks > 0 && currentTick - state.rawBlockStartTick < requiredTicks;
-    }
-
-    private void recordPassedValidHit(EntityPlayer target, int currentTick) {
-        updateCurrentTarget(target, currentTick);
-        TargetState state = getTargetState(target);
-        if (useServerAttackTime.isToggled()) {
-            state.pendingServerConfirmationTick = currentTick;
-            state.lastConfirmedTargetDamageTick = -1;
-        } else if (!isPredictedBurstWindowActive(state, currentTick)) {
-            startPredictedBurstWindow(state, currentTick, HURT_WINDOW_TICKS);
-        }
-    }
-
-    private boolean sameTarget(EntityPlayer target) {
-        if (currentTarget == null || target == null) return currentTarget == target;
-        return currentTarget.getEntityId() == target.getEntityId();
-    }
-
-    private TargetState getTargetState(EntityPlayer target) {
-        TargetState state = targetStates.get(target.getEntityId());
-        if (state == null) {
-            state = new TargetState();
-            if (useServerAttackTime.isToggled()) state.lastObservedTargetHurtTime = target.hurtTime;
-            targetStates.put(target.getEntityId(), state);
-        }
-        return state;
-    }
-
-    private void startPredictedBurstWindow(TargetState state, int startTick, int windowTicks) {
-        state.predictedBurstWindowStartTick = startTick;
-        state.predictedBurstWindowEndTick = startTick + Math.max(1, windowTicks);
-    }
-
-    private boolean isPredictedBurstWindowActive(TargetState state, int currentTick) {
-        return state.predictedBurstWindowEndTick >= 0 && currentTick < state.predictedBurstWindowEndTick;
-    }
-
-    private boolean isTakingKnockback() {
-        return takingKnockback || mc.thePlayer.hurtTime > 0;
-    }
-
-    private void pruneTargetStates() {
-        if (mc.theWorld == null) {
-            targetStates.clear();
-            return;
-        }
-        Iterator<Map.Entry<Integer, TargetState>> iterator = targetStates.entrySet().iterator();
-        while (iterator.hasNext()) {
-            Entity entity = mc.theWorld.getEntityByID(iterator.next().getKey());
-            if (!(entity instanceof EntityPlayer) || entity.isDead || ((EntityPlayer) entity).deathTime != 0) {
-                iterator.remove();
-            }
-        }
-    }
-
-    private void resetSmartState() {
-        currentTarget = null;
-        targetStates.clear();
-        lastSelfHurtTime = 0;
-        takingKnockback = false;
-        resetWaitFirstState();
-    }
-
-    private void resetWaitFirstState() {
-        waitFirstTracking = false;
-        waitFirstStartTick = -1;
-        waitFirstUnlocked = false;
-    }
-
-    private static int msToTicks(double ms) {
-        return ms <= 0.0D ? 0 : (int) Math.ceil(ms / 50.0D);
-    }
-
-    private boolean shouldCancel(double chance) {
-        return chance >= 100.0D || chance > 0.0D && Math.random() * 100.0D < chance;
-    }
-
-    private enum ClickType {
-        VALID_HIT,
-        BLOCK_INTERACTION,
-        MISSED_SWING
-    }
-
-    private static final class TargetState {
-        private int lastConfirmedTargetDamageTick = -1;
-        private int pendingServerConfirmationTick = -1;
-        private int predictedBurstWindowStartTick = -1;
-        private int predictedBurstWindowEndTick = -1;
-        private int lastObservedTargetHurtTime;
-        private int rawBlockStartTick = -1;
-        private int rawBlockMask;
+    @Override
+    public void guiUpdate() {
+        onHurt.setVisible(isMode("Legit"), this);
+        slowdown.setVisible(isMode("Vanilla") || isMode("Prediction"), this);
+        groundOnly.setVisible(isMode("Vanilla"), this);
+        reachOnly.setVisible(isMode("Vanilla"), this);
+        autoFactor.setVisible(isMode("Grim"), this);
+        offsetBudget.setVisible(isMode("Grim") && autoFactor.isToggled(), this);
+        factor.setVisible(isMode("Grim") && !autoFactor.isToggled(), this);
+        grimGroundOnly.setVisible(isMode("Grim"), this);
+        bufferSlowdown.setVisible(isMode("Buffer"), this);
+        bufferMaxTicks.setVisible(isMode("Buffer"), this);
+        bufferGroundOnly.setVisible(isMode("Buffer"), this);
     }
 }

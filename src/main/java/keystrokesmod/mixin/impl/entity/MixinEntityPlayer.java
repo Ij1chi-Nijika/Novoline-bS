@@ -2,7 +2,6 @@ package keystrokesmod.mixin.impl.entity;
 
 import keystrokesmod.module.ModuleManager;
 import keystrokesmod.module.impl.combat.Reduce;
-import keystrokesmod.module.impl.movement.KeepSprint;
 import keystrokesmod.utility.BlockAnimationUtils;
 import net.minecraft.enchantment.EnchantmentHelper;
 import net.minecraft.entity.*;
@@ -95,20 +94,21 @@ public abstract class MixinEntityPlayer extends EntityLivingBase {
                     if (flag2) {
                         if (i > 0) {
                             targetEntity.addVelocity((double) (-MathHelper.sin(this.rotationYaw * 3.1415927F / 180.0F) * (float) i * 0.5F), 0.1, (double) (MathHelper.cos(this.rotationYaw * 3.1415927F / 180.0F) * (float) i * 0.5F));
-                            if (ModuleManager.keepSprint != null && ModuleManager.keepSprint.isEnabled()
-                                    && ModuleManager.keepSprint.isWatchDogMode()) {
+                            if ((Object) this == keystrokesmod.Raven.mc.thePlayer
+                                    && ModuleManager.keepSprint != null && ModuleManager.keepSprint.isEnabled()) {
+                                ModuleManager.keepSprint.traceAttackSlowdown("before");
+                                // Flux compensates after vanilla attack slowdown and sprint reset.
                                 this.motionX *= 0.6D;
                                 this.motionZ *= 0.6D;
                                 this.setSprinting(false);
-                                KeepSprint.keepSprint(targetEntity);
-                            }
-                            else if (ModuleManager.reduce != null && ModuleManager.reduce.isEnabled()) {
+                                double factor = ModuleManager.keepSprint.getSlowFactor();
+                                this.motionX = this.motionX / 0.6D * factor;
+                                this.motionZ = this.motionZ / 0.6D * factor;
+                                if (ModuleManager.keepSprint.shouldKeepSprint()) this.setSprinting(true);
+                                ModuleManager.keepSprint.traceAttackSlowdown("after");
+                            } else if (ModuleManager.reduce != null && ModuleManager.reduce.isEnabled()) {
                                 Reduce.reduce(targetEntity);
-                            }
-                            else if (ModuleManager.keepSprint != null && ModuleManager.keepSprint.isEnabled()) {
-                                KeepSprint.keepSprint(targetEntity);
-                            }
-                            else {
+                            } else {
                                 this.motionX *= 0.6D;
                                 this.motionZ *= 0.6D;
                                 this.setSprinting(false);

@@ -187,3 +187,12 @@ tasks.register("buildMinecraft") {
         logger.lifecycle("buildMinecraft: done")
     }
 }
+
+val testKeepSprintLinkage by tasks.registering(JavaExec::class) {
+    group = "verification"
+    description = "Checks Flux KeepSprint packet release and AutoBlock stages without launching Minecraft."
+    dependsOn(tasks.testClasses)
+    classpath = sourceSets.test.get().runtimeClasspath
+    mainClass.set("keystrokesmod.utility.KeepSprintLinkageTest")
+}
+tasks.check { dependsOn(testKeepSprintLinkage) }

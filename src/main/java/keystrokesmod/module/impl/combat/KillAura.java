@@ -127,7 +127,7 @@ public class KillAura extends Module {
     private final SliderSetting watchDogAps;
     private final ButtonSetting watchDogLowTimerCheck, watchDogAllowPlayerBlocking, watchDogAllowTools;
     private long watchDogAttackDelay;
-    private boolean watchDogBufferPending;
+    private long fluxLastAttack;
     private final ButtonSetting watchDogPlayers, watchDogBosses, watchDogAnimals, watchDogGolems, watchDogSilverfish, watchDogBotCheck;
 
 
@@ -195,11 +195,21 @@ public class KillAura extends Module {
 
     @SubscribeEvent(priority = EventPriority.LOW)
     public void onWatchDogUpdate(LeaderUpdateEvent event) {
+        if (!usesFluxKeepSprint()) updateWatchDog(event);
+    }
+
+    @SubscribeEvent
+    public void onFluxWatchDogUpdate(LeaderUpdateEvent event) {
+        if (usesFluxKeepSprint()) updateWatchDog(event);
+    }
+
+    private void updateWatchDog(LeaderUpdateEvent event) {
         if (event.post) {
             if (isAutoBlockEnabled() && getAutoBlockMode() == 8 && Utils.nullCheck()) watchDogAutoBlock.post();
             return;
         }
         if (!isAutoBlockEnabled() || getAutoBlockMode() != 8 || !Utils.nullCheck()) return;
+        watchDogAutoBlock.tickFluxHypixel();
         if (watchDogAttackDelay > 0L) watchDogAttackDelay -= 50L;
         boolean attack = target != null && watchDogCanAttack();
         boolean block = attack && Utils.holdingSword() && !Velocity.stoppedBlock
@@ -223,22 +233,10 @@ public class KillAura extends Module {
                 && SmartAttack.shouldCancel && SmartAttack.onKillAura.isToggled();
     }
 
-    private boolean watchDogBufferEnabled() {
-        return ModuleManager.keepSprint != null && ModuleManager.keepSprint.isEnabled()
-                && ModuleManager.keepSprint.isBufferMode();
-    }
-
     private boolean performWatchDogAttack() {
         if (watchDogPlayerBusy()) return false;
-        if (watchDogBufferPending) {
-            watchDogBufferPending = false;
-            if (target != null && !mc.thePlayer.isUsingItem() && !autoBlockServerBlocking && watchDogRayOnTarget()) {
-                sendWatchDogAttack();
-                return true;
-            }
-            return false;
-        }
-        if (Velocity.stoppedBlock || mc.thePlayer.isUsingItem() || autoBlockServerBlocking || watchDogAttackDelay > 0L) return false;
+        if (ModuleManager.velocity != null && ModuleManager.velocity.shouldCancelFluxAuraAttack()) return false;
+        if (Velocity.stoppedBlock || mc.thePlayer.isUsingItem() || autoBlockServerBlocking || !watchDogAutoBlock.isFluxHypixel() && watchDogAttackDelay > 0L) return false;
         if (watchDogLowTimerCheck.isToggled()
                 && ((keystrokesmod.mixin.impl.accessor.IAccessorMinecraft) mc).getTimer().timerSpeed < 1.0F) return false;
         if (watchDogSmartCancelled()) return false;
@@ -249,18 +247,10 @@ public class KillAura extends Module {
         }
         int min = Math.max(1, (int) minCPS.getInput());
         int max = Math.max(min, (int) maxCPS.getInput());
-        watchDogAttackDelay += watchDogAutoBlock.active() ? (long) (1000.0F / (float) watchDogAps.getInput())
+        if (!watchDogAutoBlock.isFluxHypixel()) watchDogAttackDelay += watchDogAutoBlock.active() ? (long) (1000.0F / (float) watchDogAps.getInput())
                 : 1000L / (min + rand.nextInt(max - min + 1));
-        if (!watchDogBufferEnabled()) mc.thePlayer.swingItem();
+        if (!usesFluxKeepSprint()) mc.thePlayer.swingItem();
         if (!watchDogRayOnTarget()) return false;
-        if (watchDogBufferEnabled()) {
-            mc.thePlayer.setSprinting(false);
-            net.minecraft.client.settings.KeyBinding.setKeyBindState(mc.gameSettings.keyBindSprint.getKeyCode(), false);
-            if (!(mc.thePlayer.hurtTime > 0 && !ModuleManager.keepSprint.bufferOnHurt.isToggled())) {
-                watchDogBufferPending = true;
-                return false;
-            }
-        }
         sendWatchDogAttack();
         return true;
     }
@@ -278,12 +268,24 @@ public class KillAura extends Module {
     }
 
     private void sendWatchDogAttack() {
-        if (watchDogBufferEnabled()) mc.thePlayer.swingItem();
         MinecraftForge.EVENT_BUS.post(new AttackEvent(target, mc.thePlayer, true));
+        if (usesFluxKeepSprint()) {
+            // Flux Aura goes through the controller (which posts its own attack
+            // event), then swings. All KeepSprint modes need this same sequence.
+            mc.playerController.attackEntity(mc.thePlayer, target);
+            mc.thePlayer.swingItem();
+            hitRegistered = true;
+            return;
+        }
         ((IAccessorPlayerControllerMP) mc.playerController).callSyncCurrentPlayItem();
         mc.thePlayer.sendQueue.addToSendQueue(new C02PacketUseEntity(target, C02PacketUseEntity.Action.ATTACK));
         if (!mc.playerController.isSpectatorMode()) mc.thePlayer.attackTargetEntityWithCurrentItem(target);
         hitRegistered = true;
+    }
+
+    public boolean usesFluxKeepSprint() {
+        return ModuleManager.keepSprint != null && ModuleManager.keepSprint.isEnabled()
+               ;
     }
 
     boolean watchDogPlayerBusy() { return LeaderAutoBlockRuntime.INSTANCE.digging || LeaderAutoBlockRuntime.INSTANCE.placing; }
@@ -329,19 +331,20 @@ public class KillAura extends Module {
     public void onEnable() {
         rand = new Random();
         nextClickTime = 0L;
+        fluxLastAttack = System.currentTimeMillis();
         lastTargetSwitch = 0L;
         switchIndex = 0;
         hitRegistered = false;
         resetAutoBlock();
         watchDogAutoBlock.enable();
         watchDogAttackDelay = 0L;
-        watchDogBufferPending = false;
     }
 
     @Override
     public void onDisable() {
         setTarget(null);
         nextClickTime = 0L;
+        fluxLastAttack = System.currentTimeMillis();
         switchIndex = 0;
         hitRegistered = false;
         resetAutoBlock();
@@ -401,9 +404,24 @@ public class KillAura extends Module {
 
     @SubscribeEvent
     public void onPrePlayerInteract(PrePlayerInteractEvent e) {
+        if (usesFluxKeepSprint()) return;
+        performRegularAttack(false);
+    }
+
+    @SubscribeEvent
+    public void onFluxPlayerUpdate(LeaderUpdateEvent event) {
+        if (event.post || !usesFluxKeepSprint() || !Utils.nullCheck()
+                || isAutoBlockEnabled() && getAutoBlockMode() == 8) return;
+        // Flux Aura selects its target and attacks at player-update HEAD.
+        if (basicCondition() && settingCondition()) updateTarget();
+        performRegularAttack(true);
+    }
+
+    private void performRegularAttack(boolean flux) {
         if (isAutoBlockEnabled() && getAutoBlockMode() == 8) return;
         handleAutoBlockPrePlayerInteract();
         if (Velocity.stoppedBlock) return;
+        if (flux && ModuleManager.velocity != null && ModuleManager.velocity.shouldCancelFluxAuraAttack()) return;
         if (Velocity.extraAttacked && isAutoBlockActive()) {
             Velocity.extraAttacked = false;
             return;
@@ -414,11 +432,16 @@ public class KillAura extends Module {
         if (notUsingItem.isToggled() && mc.thePlayer.isUsingItem()) return;
 
         long now = System.currentTimeMillis();
-        if (nextClickTime == 0) {
-            nextClickTime = now;
+        if (flux) {
+            int low = Math.max(1, (int) minCPS.getInput());
+            int high = Math.max(low, (int) maxCPS.getInput());
+            long interval = keystrokesmod.utility.FluxCombatRules.attackDelay(low + rand.nextInt(high - low + 1));
+            if (now - fluxLastAttack < interval) return;
+        } else {
+            if (nextClickTime == 0) nextClickTime = now;
+            if (now < nextClickTime) return;
+            nextClickTime = now + nextDelay();
         }
-        if (now < nextClickTime) return;
-        nextClickTime = now + nextDelay();
 
         if (targetDistance > attackRange.getInput() || !isRotationOnTarget(target, attackYaw, attackPitch)) {
             mc.thePlayer.swingItem();
@@ -428,6 +451,7 @@ public class KillAura extends Module {
         MinecraftForge.EVENT_BUS.post(new AttackEvent(target, mc.thePlayer, true));
         mc.playerController.attackEntity(mc.thePlayer, target);
         mc.thePlayer.swingItem();
+        if (flux) fluxLastAttack = now;
         hitRegistered = true;
     }
 
@@ -590,7 +614,7 @@ public class KillAura extends Module {
         return false;
     }
 
-    private double watchDogDistance(Entity entity) {
+    double watchDogDistance(Entity entity) {
         Vec3 eyes = mc.thePlayer.getPositionEyes(1.0F);
         float border = entity.getCollisionBorderSize();
         AxisAlignedBB box = entity.getEntityBoundingBox().expand(border, border, border);
@@ -827,6 +851,35 @@ public class KillAura extends Module {
                 && !mc.thePlayer.isInWater() && !mc.thePlayer.isInLava();
     }
 
+    void stopFluxHypixelBlock() {
+        if (Utils.nullCheck() && (mc.thePlayer.isUsingItem() || autoBlockServerBlocking)) {
+            mc.thePlayer.sendQueue.addToSendQueue(new C07PacketPlayerDigging(
+                    C07PacketPlayerDigging.Action.RELEASE_USE_ITEM, BlockPos.ORIGIN, EnumFacing.DOWN));
+            mc.thePlayer.stopUsingItem();
+            autoBlockServerBlocking = false;
+        }
+    }
+
+    @SubscribeEvent
+    public void onFluxAutoBlockPacket(keystrokesmod.event.ReceivePacketEvent event) {
+        if (event.getPacket() instanceof net.minecraft.network.play.server.S19PacketEntityStatus) {
+            watchDogAutoBlock.onFluxDamage((net.minecraft.network.play.server.S19PacketEntityStatus) event.getPacket());
+        }
+    }
+
+    public boolean canFluxVelocityReduce(int phase) {
+        if (!isEnabled() || !isAutoBlockEnabled()) return false;
+        if (phase != 0 && !hasAutoBlockTarget()) return false;
+        if (getAutoBlockMode() == 8) return watchDogAutoBlock.velocityCanReduce(phase);
+        if (getAutoBlockMode() == 6) return phase == 2 ? isKeepSprintBlocking() : !isKeepSprintBlocking();
+        return true;
+    }
+
+    public boolean isKeepSprintBlocking() {
+        return isAutoBlockEnabled() && Utils.nullCheck() && Utils.holdingSword()
+                && (mc.thePlayer.isUsingItem() || autoBlockServerBlocking);
+    }
+
     public boolean isAutoBlockActive() {
         return isEnabled() && isAutoBlockEnabled() && (autoBlockServerBlocking || autoBlockBlinkRequest != null
                 || getAutoBlockMode() == 8 && watchDogAutoBlock.active());
@@ -871,7 +924,6 @@ public class KillAura extends Module {
 
     private void resetAutoBlock() {
         boolean watchdog = autoBlockLastMode == 8 || getAutoBlockMode() == 8;
-        watchDogBufferPending = false;
         if (watchDogAutoBlock != null && watchdog) watchDogAutoBlock.reset();
         if (!watchdog && Utils.nullCheck()) stopAutoBlock(true);
         autoBlockServerBlocking = false;
@@ -918,6 +970,7 @@ public class KillAura extends Module {
             attackingEntity = null;
             targetDistance = Double.MAX_VALUE;
             nextClickTime = 0L;
+        fluxLastAttack = System.currentTimeMillis();
         } else {
             target = (EntityLivingBase) entity;
         }

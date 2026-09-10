@@ -1,6 +1,9 @@
 package keystrokesmod.module.impl.movement;
 
 import keystrokesmod.module.Module;
+import keystrokesmod.module.ModuleManager;
+import keystrokesmod.event.PreMotionEvent;
+import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import keystrokesmod.module.setting.impl.ButtonSetting;
 import keystrokesmod.module.setting.impl.DescriptionSetting;
 import keystrokesmod.utility.Utils;
@@ -29,14 +32,13 @@ public class Sprint extends Module {
     public void onDisable() {
         if (Utils.nullCheck()) {
             KeyBinding.setKeyBindState(mc.gameSettings.keyBindSprint.getKeyCode(), false);
+            if (usesFluxKeepSprint()) mc.thePlayer.setSprinting(false);
         }
     }
 
     @Override
     public void onUpdate() {
-        if (!Utils.nullCheck()) {
-            return;
-        }
+        if (!Utils.nullCheck() || usesFluxKeepSprint()) return;
         boolean inGame = mc.inGameHasFocus;
         boolean inInv = allowInInventory.isToggled() && (mc.currentScreen instanceof GuiInventory || mc.currentScreen instanceof GuiChest);
         if (!inGame && !inInv) {
@@ -45,15 +47,29 @@ public class Sprint extends Module {
         KeyBinding.setKeyBindState(mc.gameSettings.keyBindSprint.getKeyCode(), true);
     }
 
+    private boolean usesFluxKeepSprint() {
+        return ModuleManager.keepSprint != null && ModuleManager.keepSprint.isEnabled();
+    }
+
+    @SubscribeEvent
+    public void onFluxMotion(PreMotionEvent event) {
+        if (!usesFluxKeepSprint() || !Utils.nullCheck()) return;
+        // Flux Sprint updates the key during Motion, not the earlier client tick.
+        if (mc.thePlayer.getFoodStats().getFoodLevel() > 6
+                && mc.thePlayer.movementInput.moveForward > 0 && !mc.thePlayer.isCollidedHorizontally) {
+            KeyBinding.setKeyBindState(mc.gameSettings.keyBindSprint.getKeyCode(), true);
+        }
+    }
+
     public boolean allowWhileUsingItem() {
-        return this.isEnabled() && allowUsingItem.isToggled();
+        return this.isEnabled() && !usesFluxKeepSprint() && allowUsingItem.isToggled();
     }
 
     public boolean allowWhileBackwards() {
-        return this.isEnabled() && allowBackwards.isToggled();
+        return this.isEnabled() && !usesFluxKeepSprint() && allowBackwards.isToggled();
     }
 
     public boolean allowWhileSideways() {
-        return this.isEnabled() && allowSideways.isToggled();
+        return this.isEnabled() && !usesFluxKeepSprint() && allowSideways.isToggled();
     }
 }

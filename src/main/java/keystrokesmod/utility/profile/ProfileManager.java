@@ -266,6 +266,10 @@ public class ProfileManager implements IMinecraftInstance {
                         continue;
                     }
 
+                    if (module == ModuleManager.keepSprint && KeepSprintProfileMigration.migrate(moduleInformation)) {
+                        Utils.sendMessage("&eKeep Sprint: legacy Smart/Buffer profile disabled; select a Flux mode before enabling.");
+                    }
+
                     loadedModuleData.put(module, moduleInformation);
 
                     if (module instanceof Relationships) {

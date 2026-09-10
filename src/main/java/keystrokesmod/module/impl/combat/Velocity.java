@@ -4,6 +4,11 @@ import keystrokesmod.Raven;
 import keystrokesmod.event.AttackEvent;
 import keystrokesmod.event.ClientRotationEvent;
 import keystrokesmod.event.GameTickEvent;
+import keystrokesmod.event.LeaderUpdateEvent;
+import keystrokesmod.utility.VelocityBlink;
+import keystrokesmod.utility.PacketUtils;
+import net.minecraft.network.Packet;
+import net.minecraftforge.event.world.WorldEvent;
 import keystrokesmod.event.PostPlayerInputEvent;
 import keystrokesmod.event.PreEntityVelocityEvent;
 import keystrokesmod.event.PreExplosionPacketEvent;
@@ -38,7 +43,7 @@ import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 
 public class Velocity extends Module {
     private static final String[] MODES = new String[]{"Vanilla", "Prediction"};
-    private static final String[] REDUCE_MODES = new String[]{"Attack", "Release when can attack", "Release before can attack"};
+    private static final String[] REDUCE_MODES = new String[]{"Attack", "Release when can attack", "Release before can attack", "Blink"};
 
     private final SliderSetting mode;
     private final ButtonSetting reduce;
@@ -89,12 +94,28 @@ public class Velocity extends Module {
     private double knockbackZ;
     private float targetYaw;
     private LagRequest inboundDelay;
+    private final SliderSetting startBlinkHurtTime;
+    private final SliderSetting startReleaseTicks;
+    private final ButtonSetting forceBlocking;
+    private final VelocityBlink outboundBlink = new VelocityBlink();
+    private boolean blinkPending;
+    private int knockbackTimer = -1;
+    private final java.util.Deque<S12PacketEntityVelocity> fluxDelayedVelocities = new java.util.ArrayDeque<>();
+    private final ButtonSetting cancelKillAuraAttack;
+    private final ButtonSetting forceDelayRisingToFalling;
+    private boolean cancellingFluxAuraAttack;
+    private boolean releasingFluxVelocity;
 
     public Velocity() {
         super("Velocity", category.combat, 0);
         this.registerSetting(mode = new SliderSetting("Mode", 0, MODES));
         this.registerSetting(reduce = new ButtonSetting("Reduce", true));
         this.registerSetting(reduceMode = new SliderSetting("Reduce mode", 0, REDUCE_MODES));
+        this.registerSetting(startBlinkHurtTime = new SliderSetting("Start Blink Hurt Time", 2, 0, 10, 1));
+        this.registerSetting(startReleaseTicks = new SliderSetting("Start Release Ticks", 1, 0, 5, 1));
+        this.registerSetting(forceBlocking = new ButtonSetting("Force Blocking", true));
+        this.registerSetting(cancelKillAuraAttack = new ButtonSetting("Cancel Kill Aura Attack", false));
+        this.registerSetting(forceDelayRisingToFalling = new ButtonSetting("Force Delay Rising To Falling", false));
         this.registerSetting(extraAttack = new ButtonSetting("Extra attack", false));
         this.registerSetting(reduceWhenCanAttack = new ButtonSetting("Reduce when can attack", true));
         this.registerSetting(onlySprinting = new ButtonSetting("Only sprinting", true));
@@ -147,6 +168,11 @@ public class Velocity extends Module {
         predictionKeepSprint.setVisible(reducing && reduceModeValue == 0, this);
         testMode.setVisible(reducing && reduceModeValue == 0, this);
         stopBlockHurtTime.setVisible(reducing && reduceModeValue == 0 && testMode.isToggled(), this);
+        startBlinkHurtTime.setVisible(reducing && reduceModeValue == 3, this);
+        startReleaseTicks.setVisible(reducing && reduceModeValue == 3, this);
+        forceBlocking.setVisible(reducing && reduceModeValue == 3, this);
+        cancelKillAuraAttack.setVisible(reducing && reduceModeValue == 0, this);
+        forceDelayRisingToFalling.setVisible(prediction && delay.isToggled() && !airBuffer.isToggled(), this);
         jump.setVisible(prediction, this);
         delay.setVisible(prediction, this);
         delayTicks.setVisible(prediction && delay.isToggled() && !airBuffer.isToggled(), this);
@@ -185,8 +211,9 @@ public class Velocity extends Module {
         S12PacketEntityVelocity packet = (S12PacketEntityVelocity) event.getPacket();
         if (packet.getEntityID() != mc.thePlayer.getEntityId()) return;
         knockback = true;
+        if (usesFluxKeepSprint()) return;
         if (!isPrediction() || releasingDelay || delayFlag || !predictionUsable()) return;
-        if (!delay.isToggled()) return;
+        if (isBlinkMode() || !delay.isToggled()) return;
 
         boolean shouldBuffer = airBuffer.isToggled()
                 ? !mc.thePlayer.onGround
@@ -205,9 +232,14 @@ public class Velocity extends Module {
         if (!Utils.nullCheck() || event.isCanceled()) return;
         S12PacketEntityVelocity packet = event.packet;
         if (packet.getEntityID() != mc.thePlayer.getEntityId()) return;
+        if (releasingFluxVelocity) return;
+        if (usesFluxKeepSprint() && isPrediction()) {
+            receiveFluxVelocity(event, packet);
+            return;
+        }
         releasingDelay = false;
 
-        if (fakeCheck.isToggled() && allowNext) return;
+        if (!isBlinkMode() && fakeCheck.isToggled() && allowNext) return;
         allowNext = true;
 
         if (!isPrediction()) {
@@ -221,6 +253,14 @@ public class Velocity extends Module {
         if (rotate.isToggled() && packet.getMotionY() > 0 && (Math.abs(knockbackX) > 0.01 || Math.abs(knockbackZ) > 0.01)) {
             targetYaw = (float) (Math.atan2(-knockbackZ, -knockbackX) * 180.0D / Math.PI) - 90.0F;
             rotationTick = 1;
+        }
+        if (isBlinkMode()) {
+            if (packet.getMotionY() > 0 && (packet.getMotionX() != 0 || packet.getMotionZ() != 0)) {
+                knockbackTimer = 0;
+                ticksSinceVelocity = 0;
+                blinkPending = true;
+            }
+            return;
         }
         hitCount = computeReduceTicks(packet.getMotionX(), packet.getMotionZ());
         ticksSinceVelocity = 0;
@@ -256,6 +296,8 @@ public class Velocity extends Module {
 
     @SubscribeEvent
     public void onPreUpdate(PreUpdateEvent event) {
+        if (usesFluxKeepSprint()) return;
+        if (Utils.nullCheck() && !fluxDelayedVelocities.isEmpty()) releaseFluxVelocity();
         if (!isPrediction() || !predictionUsable()) return;
         updateRotationState();
         updateDelayedVelocity();
@@ -272,6 +314,12 @@ public class Velocity extends Module {
 
     @SubscribeEvent
     public void onPostPlayerInput(PostPlayerInputEvent event) {
+        if (usesFluxKeepSprint() && jumpFlag && Utils.nullCheck()) {
+            if (mc.thePlayer.onGround && mc.thePlayer.movementInput.moveForward > 0
+                    && !mc.thePlayer.isPotionActive(Potion.jump) && !mc.thePlayer.isInWater()
+                    && !mc.thePlayer.isInLava() && mc.thePlayer.isSprinting()) mc.thePlayer.movementInput.jump = true;
+            jumpFlag = false;
+        }
         if (isPrediction() && autoMove.isToggled() && rotationTick > 0
                 && rotationTick <= (int) rotateTicks.getInput()) {
             mc.thePlayer.movementInput.moveForward = 1.0F;
@@ -280,6 +328,7 @@ public class Velocity extends Module {
 
     @SubscribeEvent
     public void onGameTick(GameTickEvent event) {
+        if (usesFluxKeepSprint()) return;
         if (ticksSinceVelocity >= 0 && ++ticksSinceVelocity >= 10) ticksSinceVelocity = -1;
         if (delayFlag) delayedTicks++;
         if (testMode.isToggled() && isPrediction() && reduce.isToggled()
@@ -351,6 +400,7 @@ public class Velocity extends Module {
     }
 
     private boolean shouldCombatRelease() {
+        if (isBlinkMode()) return false;
         if (!reduce.isToggled() || (int) reduceMode.getInput() == 0
                 || ModuleManager.killAura == null || !ModuleManager.killAura.isEnabled() || KillAura.target == null) {
             return false;
@@ -397,10 +447,14 @@ public class Velocity extends Module {
         if (target == null || target == mc.thePlayer) return false;
 
         MinecraftForge.EVENT_BUS.post(new AttackEvent(target, mc.thePlayer, false));
-        mc.thePlayer.sendQueue.addToSendQueue(new C0APacketAnimation());
-        if (MinecraftForge.EVENT_BUS.post(new AttackEvent(target, mc.thePlayer, false))) return false;
-        mc.thePlayer.sendQueue.addToSendQueue(
-                new C02PacketUseEntity(target, C02PacketUseEntity.Action.ATTACK));
+        if (usesFluxKeepSprint()) {
+            mc.thePlayer.swingItem();
+            mc.playerController.attackEntity(mc.thePlayer, target);
+        } else {
+            mc.thePlayer.sendQueue.addToSendQueue(new C0APacketAnimation());
+            if (MinecraftForge.EVENT_BUS.post(new AttackEvent(target, mc.thePlayer, false))) return false;
+            mc.thePlayer.sendQueue.addToSendQueue(new C02PacketUseEntity(target, C02PacketUseEntity.Action.ATTACK));
+        }
 
         mc.thePlayer.motionX *= 0.6D;
         mc.thePlayer.motionZ *= 0.6D;
@@ -408,6 +462,209 @@ public class Velocity extends Module {
             mc.thePlayer.setSprinting(false);
         }
         return true;
+    }
+
+    private boolean usesFluxKeepSprint() {
+        return ModuleManager.keepSprint != null && ModuleManager.keepSprint.isEnabled();
+    }
+
+    public boolean shouldCancelFluxAuraAttack() {
+        return isEnabled() && usesFluxKeepSprint() && cancellingFluxAuraAttack;
+    }
+
+    private void receiveFluxVelocity(PreEntityVelocityEvent event, S12PacketEntityVelocity packet) {
+        if (!predictionUsable() || packet.getMotionY() <= 0
+                || packet.getMotionX() == 0 && packet.getMotionZ() == 0) return;
+        knockbackX = packet.getMotionX() / 8000.0D;
+        knockbackZ = packet.getMotionZ() / 8000.0D;
+        knockbackTimer = ticksSinceVelocity = 0;
+        if (rotate.isToggled()) {
+            targetYaw = (float) (Math.atan2(-knockbackZ, -knockbackX) * 180.0D / Math.PI) - 90.0F;
+            rotationTick = 0;
+        }
+        if (isBlinkMode()) {
+            blinkPending = true;
+            return;
+        }
+        if (delay.isToggled()) {
+            fluxDelayedVelocities.offer(packet);
+            delayFlag = true;
+            delayedTicks = 0;
+            event.setCanceled(true);
+            return;
+        }
+        if (!testMode.isToggled()) beginFluxReduce();
+    }
+
+    private void beginFluxReduce() {
+        hasReceivedVelocity = true;
+        reduceTick = 0;
+        // Flux passes normalized velocity components, not protocol fixed-point units.
+        hitCount = computeReduceTicks((int) knockbackX, (int) knockbackZ);
+        if (jump.isToggled()) jumpFlag = true;
+    }
+
+    @SubscribeEvent
+    public void onFluxUpdate(LeaderUpdateEvent event) {
+        if (event.post || !usesFluxKeepSprint()) return;
+        if (!isPrediction()) {
+            if (Utils.nullCheck()) flushFluxVelocityPackets();
+            cancellingFluxAuraAttack = false;
+            return;
+        }
+        if (!predictionUsable()) return;
+        cancellingFluxAuraAttack = false;
+        if (inboundDelay != null) {
+            delayFlag = false;
+            flushInboundDelay();
+        }
+        updateBlinkState();
+        if (ticksSinceVelocity >= 0 && ++ticksSinceVelocity >= 10) ticksSinceVelocity = -1;
+        updateRotationState();
+        if (delayFlag) {
+            delayedTicks++;
+            if (canReleaseFluxVelocity()) releaseFluxVelocity();
+        }
+        if (testMode.isToggled() && ticksSinceVelocity >= (int) stopBlockHurtTime.getInput()
+                && !hasReceivedVelocity) {
+            hasReceivedVelocity = true;
+            reduceTick = 0;
+            hitCount = computeReduceTicks((int) knockbackX, (int) knockbackZ);
+            stoppedBlock = true;
+        }
+        if (velocityAttacked) {
+            if (ModuleManager.killAura != null && ModuleManager.killAura.isEnabled()
+                    && KillAura.target != null && mc.thePlayer.isSprinting()) performReduceAttack(KillAura.target);
+            else extraAttacked = false;
+            velocityAttacked = false;
+        }
+        if (!hasReceivedVelocity) return;
+        int maximum = smartTimes.isToggled() ? hitCount : (int) attackTimes.getInput();
+        if (reduceTick >= maximum) {
+            hasReceivedVelocity = stoppedBlock = false;
+            reduceTick = 0;
+            return;
+        }
+        Entity target = ModuleManager.killAura != null && ModuleManager.killAura.isEnabled()
+                && KillAura.target != null ? KillAura.target
+                : mc.objectMouseOver == null ? null : mc.objectMouseOver.entityHit;
+        if (target instanceof EntityPlayer && target != mc.thePlayer
+                && (mc.thePlayer.isSprinting() || !onlySprinting.isToggled())
+                && (!reduceWhenCanAttack.isToggled() || ModuleManager.killAura != null
+                && ModuleManager.killAura.canFluxVelocityReduce(0))) {
+            cancellingFluxAuraAttack = cancelKillAuraAttack.isToggled();
+            performReduceAttack(target);
+        }
+        reduceTick++;
+    }
+
+    private boolean canReleaseFluxVelocity() {
+        boolean timing = keystrokesmod.utility.FluxCombatRules.velocityReleaseTiming(
+                forceDelayRisingToFalling.isToggled(), mc.thePlayer.motionY, airBuffer.isToggled(),
+                groundDelay.isToggled(), mc.thePlayer.onGround, mc.thePlayer.isInWater() || mc.thePlayer.isInLava(),
+                delayedTicks, (int) delayTicks.getInput());
+        if (!timing) return false;
+        int phase = (int) reduceMode.getInput();
+        return !reduce.isToggled() || phase != 1 && phase != 2 || ModuleManager.killAura != null
+                && ModuleManager.killAura.canFluxVelocityReduce(phase);
+    }
+
+    private void flushFluxVelocityPackets() {
+        releasingFluxVelocity = true;
+        try {
+            while (!fluxDelayedVelocities.isEmpty()) PacketUtils.receivePacketNoEvent(fluxDelayedVelocities.poll());
+        } finally {
+            releasingFluxVelocity = false;
+        }
+    }
+
+    private void releaseFluxVelocity() {
+        flushFluxVelocityPackets();
+        delayFlag = false;
+        delayedTicks = 0;
+        ticksSinceVelocity = 0;
+        beginFluxReduce();
+        if (extraAttack.isToggled() && reduce.isToggled() && (int) reduceMode.getInput() != 0
+                && ModuleManager.killAura != null && ModuleManager.killAura.isEnabled()
+                && KillAura.target != null && !extraAttacked) extraAttacked = velocityAttacked = true;
+    }
+
+    public boolean isKeepSprintBlinkActive() {
+        return isEnabled() && outboundBlink.isActive();
+    }
+
+    /** Called after AutoBlock's queue, before Raven's general lag queue. */
+    public boolean bufferOutboundPacket(Packet<?> packet) {
+        if (!isEnabled() || !isBlinkMode() || !Utils.nullCheck()
+                || mc.thePlayer.isDead || mc.isSingleplayer()) {
+            clearOutboundBlink();
+            return false;
+        }
+        return outboundBlink.offer(packet);
+    }
+
+    private boolean isBlinkMode() {
+        return isPrediction() && reduce.isToggled() && (int) reduceMode.getInput() == 3;
+    }
+
+    @SubscribeEvent(priority = EventPriority.HIGH)
+    public void onBlinkUpdate(LeaderUpdateEvent event) {
+        if (event.post || usesFluxKeepSprint()) return;
+        updateBlinkState();
+    }
+
+    private void updateBlinkState() {
+        if (!Utils.nullCheck() || mc.thePlayer.isDead || mc.isSingleplayer()) {
+            clearOutboundBlink();
+            return;
+        }
+        if (!isBlinkMode() || !predictionUsable()) {
+            if (outboundBlink.isActive()) releaseOutboundBlink();
+            blinkPending = false;
+            knockbackTimer = -1;
+            return;
+        }
+        if (knockbackTimer >= 0) knockbackTimer++;
+        if (outboundBlink.isActive()) {
+            if (knockbackTimer >= (int) startReleaseTicks.getInput()) releaseOutboundBlink();
+            return;
+        }
+        if (!blinkPending) return;
+        if (knockbackTimer >= (int) startReleaseTicks.getInput()) {
+            blinkPending = false;
+            knockbackTimer = -1;
+            return;
+        }
+        if (mc.thePlayer.hurtTime > (int) startBlinkHurtTime.getInput()) return;
+        if (forceBlocking.isToggled() && (ModuleManager.killAura == null
+                || !ModuleManager.killAura.isEnabled() || !ModuleManager.killAura.isKeepSprintBlocking())) return;
+        outboundBlink.start();
+        blinkPending = false;
+    }
+
+    private void releaseOutboundBlink() {
+        outboundBlink.release(() -> ModuleManager.keepSprint != null && ModuleManager.keepSprint.isEnabled()
+                        ? ModuleManager.keepSprint.getSlowFactor() : 0.6D,
+                factor -> { mc.thePlayer.motionX *= factor; mc.thePlayer.motionZ *= factor; },
+                PacketUtils::sendPacketNoEvent);
+        blinkPending = false;
+        knockbackTimer = -1;
+    }
+
+    private void clearOutboundBlink() {
+        outboundBlink.clear();
+        blinkPending = false;
+        knockbackTimer = -1;
+    }
+
+    @SubscribeEvent
+    public void onWorldUnload(WorldEvent.Unload event) {
+        if (event.world == mc.theWorld) {
+            clearOutboundBlink();
+            fluxDelayedVelocities.clear();
+            delayFlag = false;
+            cancellingFluxAuraAttack = false;
+        }
     }
 
     private int computeReduceTicks(int motionX, int motionZ) {
@@ -440,6 +697,15 @@ public class Velocity extends Module {
     }
 
     private void resetState(boolean flush) {
+        if (flush && Utils.nullCheck() && !fluxDelayedVelocities.isEmpty()) {
+            flushFluxVelocityPackets();
+        }
+        fluxDelayedVelocities.clear();
+        cancellingFluxAuraAttack = false;
+        if (flush && Utils.nullCheck() && mc.getNetHandler() != null) {
+            outboundBlink.dispatch(PacketUtils::sendPacketNoEvent);
+        }
+        clearOutboundBlink();
         if (flush) flushInboundDelay();
         knockback = false;
         hasReceivedVelocity = false;

@@ -26,7 +26,9 @@ public class MixinNetHandlerPlayClient {
         ModuleManager.noRotate.handlePlayerPosLook(packetIn);
     }
 
-    @Inject(method = "handleEntityVelocity", at = @At("HEAD"), cancellable = true)
+    @Inject(method = "handleEntityVelocity", at = @At(value = "INVOKE",
+            target = "Lnet/minecraft/network/PacketThreadUtil;checkThreadAndEnqueue(Lnet/minecraft/network/Packet;Lnet/minecraft/network/INetHandler;Lnet/minecraft/util/IThreadListener;)V",
+            shift = At.Shift.AFTER), cancellable = true)
     public void handleEntityVelocityInjection(S12PacketEntityVelocity packet, CallbackInfo ci) {
         PreEntityVelocityEvent preEntityVelocityEvent = new PreEntityVelocityEvent(packet);
         MinecraftForge.EVENT_BUS.post(preEntityVelocityEvent);

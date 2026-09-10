@@ -249,6 +249,7 @@ public abstract class MixinEntityPlayerSP extends AbstractClientPlayer {
 
     @Overwrite
     public void onLivingUpdate() {
+        net.minecraftforge.common.MinecraftForge.EVENT_BUS.post(new keystrokesmod.event.LivingUpdateEvent());
         if (this.sprintingTicksLeft > 0) {
             --this.sprintingTicksLeft;
             if (this.sprintingTicksLeft == 0) {
